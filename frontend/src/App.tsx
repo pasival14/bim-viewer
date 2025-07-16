@@ -2,10 +2,11 @@ import React, { Suspense, useState, useRef, useEffect, useMemo } from 'react';
 import { Canvas, useLoader } from '@react-three/fiber';
 import { OrbitControls, Environment, Html } from '@react-three/drei';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
-import { Building, UploadCloud, Box, X, MessageCircle, Plus, Send, AlertCircle, Clock, User, LogOut } from 'lucide-react';
+import { Building, UploadCloud, Box, X, MessageCircle, Plus, Send, AlertCircle, Clock, User, LogOut, ArrowLeft } from 'lucide-react';
 import type { Object3D } from 'three';
 import * as THREE from 'three';
 import { fetchAuthSession } from 'aws-amplify/auth';
+import { ProjectDashboard } from './Dashboard';
 
 const API_URL = 'http://localhost:4000';
 
@@ -27,6 +28,15 @@ interface NewIssue {
   description: string;
   priority: 'low' | 'medium' | 'high';
   author: string;
+}
+
+// Project interface - should match what's returned from your API
+interface Project {
+  projectId: string;
+  projectName: string;
+  modelUrl: string;
+  ownerId: string;
+  createdAt: string;
 }
 
 // Authentication-related interfaces
@@ -51,6 +61,19 @@ const Loader = () => (
 );
 
 const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any) => void }) => {
+  // Add validation for URL
+  if (!url || url === 'undefined' || url === 'null') {
+    return (
+      <Html center>
+        <div className="flex flex-col items-center justify-center text-red-500 p-4">
+          <AlertCircle className="w-12 h-12 mb-2" />
+          <p className="text-center">Model URL is not available</p>
+          <p className="text-sm text-gray-500 text-center">Please check your project configuration</p>
+        </div>
+      </Html>
+    );
+  }
+
   const { scene } = useLoader(GLTFLoader, url);
 
   const handleMeshClick = (event: any) => {
@@ -231,10 +254,11 @@ const IssueItem = ({ issue, onStatusChange }: { issue: Issue; onStatusChange: (i
   );
 };
 
-const IssueForm = ({ onSubmit, onCancel, defaultAuthor }: { 
+const IssueForm = ({ onSubmit, onCancel, defaultAuthor, projectId }: { 
   onSubmit: (issue: NewIssue) => void; 
   onCancel: () => void;
   defaultAuthor: string;
+  projectId: string;
 }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -331,7 +355,11 @@ const IssueForm = ({ onSubmit, onCancel, defaultAuthor }: {
   );
 };
 
-const IssuesPanel = ({ objectData, authToken }: { objectData: any; authToken: string }) => {
+const IssuesPanel = ({ objectData, authToken, projectId }: { 
+  objectData: any; 
+  authToken: string; 
+  projectId: string;
+}) => {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -385,7 +413,8 @@ const IssuesPanel = ({ objectData, authToken }: { objectData: any; authToken: st
         method: 'POST',
         body: JSON.stringify({
           ...newIssue,
-          objectId
+          objectId,
+          projectId
         }),
       });
       
@@ -468,6 +497,7 @@ const IssuesPanel = ({ objectData, authToken }: { objectData: any; authToken: st
           onSubmit={createIssue}
           onCancel={() => setShowForm(false)}
           defaultAuthor=""
+          projectId={projectId}
         />
       )}
 
@@ -499,10 +529,11 @@ const IssuesPanel = ({ objectData, authToken }: { objectData: any; authToken: st
   );
 };
 
-const PropertiesPanel = ({ data, onClear, authToken }: { 
+const PropertiesPanel = ({ data, onClear, authToken, projectId }: { 
   data: any | null; 
   onClear: () => void; 
   authToken: string;
+  projectId: string;
 }) => {
   const [activeTab, setActiveTab] = useState<'properties' | 'issues'>('properties');
 
@@ -565,24 +596,26 @@ const PropertiesPanel = ({ data, onClear, authToken }: {
       )}
 
       {activeTab === 'issues' && (
-        <IssuesPanel objectData={data} authToken={authToken} />
+        <IssuesPanel 
+          objectData={data} 
+          authToken={authToken} 
+          projectId={projectId}
+        />
       )}
     </div>
   );
 };
 
 const App: React.FC<AppProps> = ({ signOut, user }) => {
-  const [modelUrl, setModelUrl] = useState('https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/DamagedHelmet/glTF-Binary/DamagedHelmet.glb');
   const [selectedObjectData, setSelectedObjectData] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [authToken, setAuthToken] = useState<string>('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Get the current user's token when the component mounts
   useEffect(() => {
     const getAuthToken = async () => {
       try {
-        // Use the new fetchAuthSession function from Amplify v6
         const session = await fetchAuthSession();
         const idToken = session.tokens?.idToken?.toString();
         if (idToken) {
@@ -601,127 +634,82 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
     }
   }, [user]);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    
-    setError(null);
-    setSelectedObjectData(null);
-
-    if (!authToken) {
-      setError('Authentication token not available. Please refresh the page.');
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('model', file);
-
-    try {
-      const response = await fetch(`${API_URL}/api/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
-        body: formData,
-      });
-      
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'File upload failed.');
-      }
-      
-      setModelUrl(`${API_URL}${data.url}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-    } finally {
-      if (event.target) {
-        event.target.value = '';
-      }
-    }
-  };
-  
-  const handleUploadClick = () => fileInputRef.current?.click();
-
   const handleSignOut = () => {
     if (signOut) {
       signOut();
     }
   };
 
-  return (
-    <div className="w-screen h-screen bg-slate-100 flex flex-col">
-      <header className="bg-white shadow-md z-10">
-        <div className="container mx-auto px-4 py-3 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <Building className="w-8 h-8 text-sky-600" />
-            <h1 className="text-xl font-bold text-slate-800">BIM Model Viewer</h1>
-          </div>
-          
-          <div className="flex items-center gap-4">
-            {user && (
-              <div className="flex items-center gap-3 text-sm text-slate-600">
-                <User className="w-4 h-4" />
-                <span>Welcome, {user.username}</span>
-              </div>
-            )}
-            
-            <button 
-              onClick={handleUploadClick} 
-              className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-700 transition font-semibold"
-            >
-              <UploadCloud className="w-5 h-5" />
-              <span>Upload .glb Model</span>
-            </button>
-            
-            {signOut && (
-              <button
-                onClick={handleSignOut}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-semibold"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>Sign Out</span>
-              </button>
-            )}
-          </div>
-          
-          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".glb" className="hidden" />
-        </div>
-      </header>
-      
-      <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        <Canvas 
-          camera={{ position: [0.2, 0.2, 0.5], fov: 50 }}
-          onPointerDown={(e) => console.log('Canvas pointer down:', e)}
-          onPointerUp={(e) => console.log('Canvas pointer up:', e)}
-          onClick={(e) => console.log('Canvas click:', e)}
-        >
-          <Suspense fallback={<Loader />}>
-            <ambientLight intensity={1.5} />
-            <Environment preset="city" />
-            <Model url={modelUrl} onObjectClick={setSelectedObjectData} />
-            <OrbitControls />
-          </Suspense>
-        </Canvas>
+  // If a project is selected, show the viewer. Otherwise, show the dashboard.
+  if (activeProject) {
+    return (
+      <div className="w-screen h-screen flex flex-col">
+        <header className="bg-white shadow-sm p-3 flex justify-between items-center z-10">
+          <button 
+            onClick={() => setActiveProject(null)}
+            className="flex items-center gap-2 px-3 py-1 bg-slate-200 text-slate-800 rounded hover:bg-slate-300"
+          >
+            <ArrowLeft size={16} />
+            Back to Projects
+          </button>
+          <h1 className="text-lg font-bold text-slate-700 truncate">{activeProject.projectName}</h1>
+          <button 
+            onClick={handleSignOut} 
+            className="flex items-center gap-2 text-sm text-red-600 hover:text-red-700"
+          >
+            <LogOut size={16} />
+            Sign Out
+          </button>
+        </header>
         
-        <aside className="w-full lg:w-96 bg-white overflow-y-auto shadow-lg">
-          <PropertiesPanel 
-            data={selectedObjectData} 
-            onClear={() => setSelectedObjectData(null)} 
-            authToken={authToken}
-          />
-        </aside>
-      </main>
-      
-      {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded m-4">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={16} />
-            {error}
+        <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+          <div className="flex-1">
+            <Canvas camera={{ position: [0, 5, 10], fov: 50 }}>
+              <Suspense fallback={<Loader />}>
+                <ambientLight intensity={1.5} />
+                <Environment preset="city" />
+                <Model url={activeProject.modelUrl} onObjectClick={setSelectedObjectData} />
+                <OrbitControls />
+              </Suspense>
+            </Canvas>
           </div>
-        </div>
-      )}
-    </div>
-  );
+          
+          <aside className="w-full lg:w-96 bg-white overflow-y-auto shadow-lg">
+            <PropertiesPanel 
+              data={selectedObjectData} 
+              onClear={() => setSelectedObjectData(null)} 
+              authToken={authToken}
+              projectId={activeProject.projectId}
+            />
+          </aside>
+        </main>
+        
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded m-4">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={16} />
+              {error}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  } else {
+    // Dashboard view
+    return user && authToken ? (
+      <ProjectDashboard
+        authToken={authToken}
+        user={user}
+        onSelectProject={(project) => setActiveProject(project)}
+        signOut={handleSignOut}
+      />
+    ) : (
+      <div className="w-screen h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sky-600"></div>
+        <p className="ml-4 text-slate-600">Loading user session...</p>
+      </div>
+    );
+  }
 };
 
 export default App;
