@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Building, Plus, UploadCloud, Loader, AlertCircle, Search, Calendar, User, LogOut, Trash2, Edit3, Eye, MoreVertical } from 'lucide-react';
+import { Building, Plus, UploadCloud, Loader, AlertCircle, Search, Calendar, User, LogOut, Trash2, Edit3, Eye, MoreVertical, Share2 } from 'lucide-react';
+import { ShareModal } from './ShareModal';
 
 // --- Type Definitions ---
 interface Project {
@@ -162,6 +163,8 @@ const ProjectActionsDropdown = ({
   onView, 
   onEdit, 
   onDelete, 
+  onShare,
+  currentUserId,
   isOpen, 
   onToggle 
 }: {
@@ -169,6 +172,8 @@ const ProjectActionsDropdown = ({
   onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onShare: () => void;
+  currentUserId: string;
   isOpen: boolean;
   onToggle: () => void;
 }) => {
@@ -197,28 +202,45 @@ const ProjectActionsDropdown = ({
             <Eye size={14} />
             View
           </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit();
-              onToggle();
-            }}
-            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 transition-colors"
-          >
-            <Edit3 size={14} />
-            Rename
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-              onToggle();
-            }}
-            className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors"
-          >
-            <Trash2 size={14} />
-            Delete
-          </button>
+          
+          {/* Only show edit/delete/share options for project owner */}
+          {currentUserId === project.ownerId && (
+            <>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+                  onToggle();
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 transition-colors"
+              >
+                <Edit3 size={14} />
+                Rename
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShare();
+                  onToggle();
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 transition-colors"
+              >
+                <Share2 size={14} />
+                Share
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                  onToggle();
+                }}
+                className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors"
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -230,12 +252,16 @@ const ProjectCard = ({
   project, 
   onSelect, 
   onEdit, 
-  onDelete 
+  onDelete,
+  onShare,
+  currentUserId
 }: {
   project: Project;
   onSelect: (project: Project) => void;
   onEdit: (project: Project) => void;
   onDelete: (project: Project) => void;
+  onShare: (project: Project) => void;
+  currentUserId: string;
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -258,14 +284,33 @@ const ProjectCard = ({
           <h3 className="font-semibold text-slate-800 truncate pr-2 text-lg">
             {project.projectName}
           </h3>
-          <ProjectActionsDropdown
-            project={project}
-            onView={() => onSelect(project)}
-            onEdit={() => onEdit(project)}
-            onDelete={() => onDelete(project)}
-            isOpen={dropdownOpen}
-            onToggle={() => setDropdownOpen(!dropdownOpen)}
-          />
+          <div className="flex items-center gap-1">
+            {/* Share button - only visible to project owner */}
+            {currentUserId === project.ownerId && (
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShare(project);
+                }}
+                className="p-2 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-full transition-colors"
+                title="Share Project"
+              >
+                <Share2 size={16} />
+              </button>
+            )}
+            
+            {/* Dropdown menu */}
+            <ProjectActionsDropdown
+              project={project}
+              onView={() => onSelect(project)}
+              onEdit={() => onEdit(project)}
+              onDelete={() => onDelete(project)}
+              onShare={() => onShare(project)}
+              currentUserId={currentUserId}
+              isOpen={dropdownOpen}
+              onToggle={() => setDropdownOpen(!dropdownOpen)}
+            />
+          </div>
         </div>
         
         <div className="flex items-center gap-4 text-sm text-slate-500">
@@ -473,6 +518,7 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: 
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sharingProject, setSharingProject] = useState<Project | null>(null);
 
   // Fetch projects on mount
   useEffect(() => {
@@ -523,6 +569,10 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: 
     setProjects(prev => prev.filter(p => p.projectId !== projectId));
   };
 
+  const handleShareProject = (project: Project) => {
+    setSharingProject(project);
+  };
+
   return (
     <div className="w-screen h-screen bg-slate-50 flex flex-col">
       {/* Modals */}
@@ -549,6 +599,16 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: 
           authToken={authToken}
           onClose={() => setDeletingProject(null)}
           onProjectDeleted={handleProjectDeleted}
+        />
+      )}
+
+      {/* Share Modal */}
+      {sharingProject && (
+        <ShareModal
+          authToken={authToken}
+          projectId={sharingProject.projectId}
+          projectName={sharingProject.projectName}
+          onClose={() => setSharingProject(null)}
         />
       )}
 
@@ -655,6 +715,8 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: 
                     onSelect={onSelectProject}
                     onEdit={setEditingProject}
                     onDelete={setDeletingProject}
+                    onShare={handleShareProject}
+                    currentUserId={user.username}
                   />
                 ))}
               </div>

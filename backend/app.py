@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from werkzeug.utils import secure_filename
 import boto3
 from botocore.exceptions import ClientError
-from datetime import datetime
 import json
 import uuid
 from decimal import Decimal
@@ -18,12 +17,9 @@ from auth import token_required
 
 # --- Configuration ---
 ALLOWED_EXTENSIONS = {'glb'}
-
-# --- AWS Configuration (Expanded for S3) ---
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-
-# S3 Configuration
 S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME')
+COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID')
 
 # --- NEW: Define all table names ---
 DYNAMODB_ISSUES_TABLE = os.environ.get('DYNAMODB_TABLE_NAME', 'bim-viewer-issues')
@@ -58,6 +54,7 @@ except Exception as e:
 
 # Initialize S3 Client
 s3_client = session.client('s3')
+cognito_client = session.client('cognito-idp')
 
 issues_table = dynamodb.Table(DYNAMODB_ISSUES_TABLE)
 projects_table = dynamodb.Table(DYNAMODB_PROJECTS_TABLE)
@@ -276,6 +273,61 @@ def get_project(current_user_sub, project_id):
     except Exception as e:
         print(f"Unexpected error: {e}")
         return jsonify(error="An unexpected error occurred"), 500
+    
+# --- NEW: Invite User Endpoint ---
+@app.route('/api/projects/<string:project_id>/invite', methods=['POST'])
+@token_required
+def invite_user_to_project(current_user_sub, project_id):
+    """
+    Invites a user (by email) to collaborate on a project.
+    """
+    # 1. Check if the current user is the owner of the project
+    try:
+        project_item = projects_table.get_item(Key={'projectId': project_id}).get('Item')
+        if not project_item or project_item.get('ownerId') != current_user_sub:
+            return jsonify(error="Not authorized to share this project"), 403
+    except ClientError as e:
+        return jsonify(error=f"Database error: {e}"), 500
+
+    # 2. Get the email of the user to invite from the request body
+    data = request.get_json()
+    if not data or 'email' not in data:
+        return jsonify(error="Email of the user to invite is required"), 400
+    
+    invitee_email = data['email']
+
+    # 3. Find the user in Cognito by their email
+    try:
+        cognito_response = cognito_client.list_users(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Filter=f"email = \"{invitee_email}\""
+        )
+        users = cognito_response.get('Users', [])
+        if not users:
+            return jsonify(error=f"User with email '{invitee_email}' not found"), 404
+        
+        # Extract the user's unique 'sub' identifier
+        invitee_sub = next((attr['Value'] for attr in users[0]['Attributes'] if attr['Name'] == 'sub'), None)
+        if not invitee_sub:
+            return jsonify(error="Could not identify user attribute"), 500
+
+    except ClientError as e:
+        return jsonify(error=f"Cognito API error: {e}"), 500
+
+    # 4. Create the new permission in DynamoDB
+    permission = {
+        'permissionId': str(uuid.uuid4()),
+        'projectId': project_id,
+        'userId': invitee_sub,
+        'role': 'collaborator' # Assign the 'collaborator' role
+    }
+    
+    try:
+        permissions_table.put_item(Item=permission)
+    except ClientError as e:
+        return jsonify(error=f"Failed to save permission: {e}"), 500
+
+    return jsonify(message=f"Successfully invited {invitee_email} to the project"), 200
 
 # --- Issues Endpoints (MODIFIED) ---
 
