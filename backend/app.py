@@ -60,7 +60,7 @@ issues_table = dynamodb.Table(DYNAMODB_ISSUES_TABLE)
 projects_table = dynamodb.Table(DYNAMODB_PROJECTS_TABLE)
 permissions_table = dynamodb.Table(DYNAMODB_PERMISSIONS_TABLE)
 
-# --- Helper Functions (Unchanged) ---
+# --- Helper Functions ---
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -106,6 +106,49 @@ def json_serial(obj):
 
 def generate_sort_key():
     return datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
+# --- NEW: Helper function to check if user has project access ---
+def user_has_project_access(user_sub, project_id):
+    """Check if user has access to a project"""
+    try:
+        permissions_response = permissions_table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('projectId').eq(project_id) & 
+                           boto3.dynamodb.conditions.Attr('userId').eq(user_sub)
+        )
+        return len(permissions_response.get('Items', [])) > 0
+    except Exception as e:
+        print(f"Error checking project access: {e}")
+        return False
+
+# --- NEW: Helper function to check if user exists ---
+def check_user_exists(email):
+    """
+    Check if a user exists in Cognito User Pool by email.
+    Returns (exists: bool, user_sub: str|None, error: str|None)
+    """
+    try:
+        # Use AdminGetUser with email as username
+        response = cognito_client.admin_get_user(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=email
+        )
+        
+        # Extract the user's 'sub' from attributes
+        user_sub = None
+        for attr in response.get('UserAttributes', []):
+            if attr['Name'] == 'sub':
+                user_sub = attr['Value']
+                break
+        
+        return True, user_sub, None
+        
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'UserNotFoundException':
+            return False, None, "User has not created an account"
+        else:
+            return False, None, f"Error checking user: {e}"
+    except Exception as e:
+        return False, None, f"Unexpected error: {e}"
 
 # --- API Endpoints ---
 
@@ -240,12 +283,7 @@ def get_projects(current_user_sub):
 def get_project(current_user_sub, project_id):
     try:
         # Check if user has permission to access this project
-        permissions_response = permissions_table.scan(
-            FilterExpression=boto3.dynamodb.conditions.Attr('projectId').eq(project_id) & 
-                           boto3.dynamodb.conditions.Attr('userId').eq(current_user_sub)
-        )
-        
-        if not permissions_response.get('Items', []):
+        if not user_has_project_access(current_user_sub, project_id):
             return jsonify(error="Project not found or access denied"), 404
         
         # Get project details
@@ -273,8 +311,38 @@ def get_project(current_user_sub, project_id):
     except Exception as e:
         print(f"Unexpected error: {e}")
         return jsonify(error="An unexpected error occurred"), 500
+
+# --- FIXED: Check User Endpoint ---
+@app.route('/check-user', methods=['POST'])
+def check_user():
+    """
+    Checks if a user exists in the Cognito User Pool.
+    Expects a JSON payload with an "email" key.
+    """
+    data = request.get_json()
+    if not data or 'email' not in data:
+        return jsonify({'error': 'Email is required'}), 400
+
+    email = data['email']
     
-# --- NEW: Invite User Endpoint ---
+    # Validate email format (basic check)
+    if '@' not in email or '.' not in email:
+        return jsonify({'error': 'Invalid email format'}), 400
+
+    exists, user_sub, error = check_user_exists(email)
+    
+    if error:
+        if "User has not created an account" in error:
+            return jsonify({'error': error}), 404
+        else:
+            return jsonify({'error': error}), 500
+    
+    if exists:
+        return jsonify({'message': f'User {email} exists.', 'userSub': user_sub}), 200
+    else:
+        return jsonify({'error': 'User has not created an account'}), 404
+
+# --- UPDATED: Invite User Endpoint ---
 @app.route('/api/projects/<string:project_id>/invite', methods=['POST'])
 @token_required
 def invite_user_to_project(current_user_sub, project_id):
@@ -296,25 +364,32 @@ def invite_user_to_project(current_user_sub, project_id):
     
     invitee_email = data['email']
 
-    # 3. Find the user in Cognito by their email
+    # 3. Check if the user exists using our helper function
+    exists, invitee_sub, error = check_user_exists(invitee_email)
+    
+    if error:
+        if "User has not created an account" in error:
+            return jsonify(error=f"User with email '{invitee_email}' has not created an account yet"), 404
+        else:
+            return jsonify(error=f"Error checking user: {error}"), 500
+    
+    if not exists or not invitee_sub:
+        return jsonify(error=f"User with email '{invitee_email}' not found"), 404
+
+    # 4. Check if user is already invited to this project
     try:
-        cognito_response = cognito_client.list_users(
-            UserPoolId=COGNITO_USER_POOL_ID,
-            Filter=f"email = \"{invitee_email}\""
+        existing_permission = permissions_table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('projectId').eq(project_id) & 
+                           boto3.dynamodb.conditions.Attr('userId').eq(invitee_sub)
         )
-        users = cognito_response.get('Users', [])
-        if not users:
-            return jsonify(error=f"User with email '{invitee_email}' not found"), 404
         
-        # Extract the user's unique 'sub' identifier
-        invitee_sub = next((attr['Value'] for attr in users[0]['Attributes'] if attr['Name'] == 'sub'), None)
-        if not invitee_sub:
-            return jsonify(error="Could not identify user attribute"), 500
-
+        if existing_permission.get('Items', []):
+            return jsonify(error=f"User {invitee_email} is already invited to this project"), 400
+            
     except ClientError as e:
-        return jsonify(error=f"Cognito API error: {e}"), 500
+        return jsonify(error=f"Database error: {e}"), 500
 
-    # 4. Create the new permission in DynamoDB
+    # 5. Create the new permission in DynamoDB
     permission = {
         'permissionId': str(uuid.uuid4()),
         'projectId': project_id,
@@ -329,28 +404,38 @@ def invite_user_to_project(current_user_sub, project_id):
 
     return jsonify(message=f"Successfully invited {invitee_email} to the project"), 200
 
-# --- Issues Endpoints (MODIFIED) ---
 
 @app.route('/api/issues', methods=['POST'])
 @token_required
 def create_issue(current_user_sub):
     data = request.get_json()
     
+    # Validate required fields
     required_fields = ['title', 'description', 'objectId', 'author', 'projectId']
     if not data or not all(field in data for field in required_fields):
-        return jsonify(error="Missing required fields, including projectId"), 400
+        return jsonify(error="Missing required fields: title, description, objectId, author, projectId"), 400
+
+    # Check if user has access to the project
+    if not user_has_project_access(current_user_sub, data['projectId']):
+        return jsonify(error="Access denied to this project"), 403
+
+    # Validate data
+    is_valid, error_msg = validate_issue_data(data)
+    if not is_valid:
+        return jsonify(error=error_msg), 400
 
     issue_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
     
+    # FIXED: Create issue with projectId as partition key
     issue = {
-        'id': issue_id,
-        'projectId': data['projectId'],
-        'objectId': data['objectId'],
-        'sortKey': f"{created_at}#{issue_id}",
-        'title': data['title'],
-        'description': data['description'],
-        'author': data['author'],
+        'projectId': data['projectId'],  # Partition key
+        'sortKey': f"ISSUE#{issue_id}#{created_at}",  # Sort key
+        'id': issue_id,  # Unique identifier for the issue
+        'objectId': data['objectId'],  # Store as regular attribute
+        'title': data['title'].strip(),
+        'description': data['description'].strip(),
+        'author': data['author'].strip(),
         'priority': data.get('priority', 'medium'),
         'status': data.get('status', 'open'),
         'createdAt': created_at,
@@ -360,66 +445,59 @@ def create_issue(current_user_sub):
     
     try:
         issues_table.put_item(Item=issue)
-        return jsonify(json.loads(json.dumps(issue, default=json_serial))), 201
+        print(f"Created issue: {issue}")
+        return jsonify(json.loads(json.dumps(serialize_issue(issue), default=json_serial))), 201
     except ClientError as e:
-        return jsonify(error="Database error occurred"), 500
-
-@app.route('/api/issues/<object_id>', methods=['GET'])
-@token_required
-def get_issues_for_object(current_user_sub, object_id):
-    if table is None:
-        return jsonify(error="Database connection not available"), 500
-    
-    try:
-        response = table.query(
-            KeyConditionExpression=boto3.dynamodb.conditions.Key('objectId').eq(object_id),
-            ScanIndexForward=False
-        )
-        issues = response.get('Items', [])
-        serialized_issues = [serialize_issue(issue) for issue in issues]
-        return jsonify(serialized_issues)
-        
-    except ClientError as e:
-        print(f"DynamoDB error fetching issues: {e}")
+        print(f"DynamoDB error creating issue: {e}")
         return jsonify(error="Database error occurred"), 500
     except Exception as e:
-        print(f"Error fetching issues: {e}")
-        return jsonify(error="Failed to fetch issues"), 500
+        print(f"Error creating issue: {e}")
+        return jsonify(error="Failed to create issue"), 500
+
 
 @app.route('/api/issues/<issue_id>', methods=['PUT'])
 @token_required
 def update_issue(current_user_sub, issue_id):
-    if table is None:
-        return jsonify(error="Database connection not available"), 500
-    
     try:
         data = request.get_json()
         if not data:
             return jsonify(error="No data provided"), 400
         
-        response = table.scan(FilterExpression=boto3.dynamodb.conditions.Attr('id').eq(issue_id))
-        items = response.get('Items', [])
-        if not items:
-            return jsonify(error="Issue not found"), 404
+        print(f"Updating issue: {issue_id}")
         
-        current_issue = items[0]
-        # Optional: Add ownership check
-        # if current_issue.get('owner_sub') != current_user_sub:
-        #     return jsonify(error="Not authorized to update this issue"), 403
+        # FIXED: Find the issue by scanning for the issue ID
+        response = issues_table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('id').eq(issue_id)
+        )
+        items = response.get('Items', [])
 
+        if not items:
+            print(f"Issue not found: {issue_id}")
+            return jsonify(error="Issue not found"), 404
+
+        current_issue = items[0]
+        print(f"Found issue: {current_issue}")
+        
+        # Check if user has access to the project
+        if not user_has_project_access(current_user_sub, current_issue['projectId']):
+            return jsonify(error="Access denied to this issue"), 403
+
+        # Prepare update expression
         update_expression_parts = ["updatedAt = :updated_at"]
-        expression_attribute_values = {':updated_at': datetime.utcnow().isoformat() + 'Z'}
+        expression_attribute_values = {':updated_at': datetime.now(timezone.utc).isoformat()}
         expression_attribute_names = {}
 
+        # Handle allowed fields
         allowed_fields = ['title', 'description', 'status', 'priority']
         for field in allowed_fields:
             if field in data:
+                # Validate field values
                 if field in ['title', 'description'] and not data[field].strip():
                     return jsonify(error=f"{field} cannot be empty"), 400
                 if field == 'status' and data[field] not in ['open', 'in-progress', 'resolved']:
-                    return jsonify(error="Invalid status"), 400
+                    return jsonify(error="Status must be 'open', 'in-progress', or 'resolved'"), 400
                 if field == 'priority' and data[field] not in ['low', 'medium', 'high']:
-                    return jsonify(error="Invalid priority"), 400
+                    return jsonify(error="Priority must be 'low', 'medium', or 'high'"), 400
                 
                 update_expression_parts.append(f"#{field} = :{field}")
                 expression_attribute_names[f"#{field}"] = field
@@ -427,8 +505,9 @@ def update_issue(current_user_sub, issue_id):
 
         update_expression = "SET " + ", ".join(update_expression_parts)
         
+        # FIXED: Update using projectId and sortKey as composite key
         update_args = {
-            'Key': {'objectId': current_issue['objectId'], 'sortKey': current_issue['sortKey']},
+            'Key': {'projectId': current_issue['projectId'], 'sortKey': current_issue['sortKey']},
             'UpdateExpression': update_expression,
             'ExpressionAttributeValues': expression_attribute_values,
             'ReturnValues': 'ALL_NEW'
@@ -436,9 +515,12 @@ def update_issue(current_user_sub, issue_id):
         if expression_attribute_names:
             update_args['ExpressionAttributeNames'] = expression_attribute_names
 
-        updated_response = table.update_item(**update_args)
+        # Update the issue
+        updated_response = issues_table.update_item(**update_args)
         updated_issue = updated_response.get('Attributes')
-        return jsonify(serialize_issue(updated_issue))
+        
+        print(f"Updated issue: {updated_issue}")
+        return jsonify(serialize_issue(updated_issue)), 200
         
     except ClientError as e:
         print(f"DynamoDB error updating issue: {e}")
@@ -450,22 +532,28 @@ def update_issue(current_user_sub, issue_id):
 @app.route('/api/issues/<issue_id>', methods=['DELETE'])
 @token_required
 def delete_issue(current_user_sub, issue_id):
-    if table is None:
-        return jsonify(error="Database connection not available"), 500
-    
     try:
-        response = table.scan(FilterExpression=boto3.dynamodb.conditions.Attr('id').eq(issue_id))
+        # Find the issue by scanning for the issue ID
+        response = issues_table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('id').eq(issue_id)
+        )
         items = response.get('Items', [])
+        
         if not items:
             return jsonify(error="Issue not found"), 404
         
         current_issue = items[0]
-        # Optional: Add ownership check
-        # if current_issue.get('owner_sub') != current_user_sub:
-        #     return jsonify(error="Not authorized to delete this issue"), 403
+        
+        # Check if user has access to the project
+        if not user_has_project_access(current_user_sub, current_issue['projectId']):
+            return jsonify(error="Access denied to this issue"), 403
 
-        table.delete_item(Key={'objectId': current_issue['objectId'], 'sortKey': current_issue['sortKey']})
-        return jsonify(message="Issue deleted successfully")
+        # FIXED: Delete using projectId and sortKey as composite key
+        issues_table.delete_item(
+            Key={'projectId': current_issue['projectId'], 'sortKey': current_issue['sortKey']}
+        )
+        
+        return jsonify(message="Issue deleted successfully"), 200
         
     except ClientError as e:
         print(f"DynamoDB error deleting issue: {e}")
@@ -477,32 +565,51 @@ def delete_issue(current_user_sub, issue_id):
 @app.route('/api/issues', methods=['GET'])
 @token_required
 def get_all_issues(current_user_sub):
-    if table is None:
-        return jsonify(error="Database connection not available"), 500
-    
     try:
+        # Get query parameters
         status_filter = request.args.get('status')
         priority_filter = request.args.get('priority')
         object_id_filter = request.args.get('objectId')
+        project_id_filter = request.args.get('projectId')
         
-        if object_id_filter:
-            response = table.query(
-                KeyConditionExpression=boto3.dynamodb.conditions.Key('objectId').eq(object_id_filter),
-                ScanIndexForward=False
-            )
+        accessible_issues = []
+        
+        # If filtering by specific project, use query (THIS IS NOW CORRECT)
+        if project_id_filter:
+            if user_has_project_access(current_user_sub, project_id_filter):
+                response = issues_table.query(
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('projectId').eq(project_id_filter),
+                    ScanIndexForward=False  # Most recent first
+                )
+                accessible_issues = response.get('Items', [])
         else:
-            response = table.scan()
+            # Get all projects the user has access to
+            permissions_response = permissions_table.scan(
+                FilterExpression=boto3.dynamodb.conditions.Attr('userId').eq(current_user_sub)
+            )
+            user_project_ids = [perm['projectId'] for perm in permissions_response.get('Items', [])]
+            
+            # Query issues for each accessible project
+            for project_id in user_project_ids:
+                response = issues_table.query(
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('projectId').eq(project_id),
+                    ScanIndexForward=False
+                )
+                accessible_issues.extend(response.get('Items', []))
         
-        issues = response.get('Items', [])
-        
+        # Apply additional filters
         if status_filter:
-            issues = [issue for issue in issues if issue.get('status') == status_filter]
+            accessible_issues = [issue for issue in accessible_issues if issue.get('status') == status_filter]
         if priority_filter:
-            issues = [issue for issue in issues if issue.get('priority') == priority_filter]
+            accessible_issues = [issue for issue in accessible_issues if issue.get('priority') == priority_filter]
+        if object_id_filter:
+            accessible_issues = [issue for issue in accessible_issues if issue.get('objectId') == object_id_filter]
         
-        issues.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
-        serialized_issues = [serialize_issue(issue) for issue in issues]
-        return jsonify(serialized_issues)
+        # Sort by creation date (most recent first)
+        accessible_issues.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        
+        serialized_issues = [serialize_issue(issue) for issue in accessible_issues]
+        return jsonify(serialized_issues), 200
         
     except ClientError as e:
         print(f"DynamoDB error fetching all issues: {e}")
@@ -511,41 +618,54 @@ def get_all_issues(current_user_sub):
         print(f"Error fetching all issues: {e}")
         return jsonify(error="Failed to fetch issues"), 500
 
-@app.route('/api/issues/stats', methods=['GET'])
-@token_required
-def get_issue_stats(current_user_sub):
-    if table is None:
-        return jsonify(error="Database connection not available"), 500
     
+@app.route('/api/debug/permissions/<project_id>', methods=['GET'])
+@token_required
+def debug_permissions(current_user_sub, project_id):
+    """Debug endpoint to check project permissions"""
     try:
-        response = table.scan()
-        issues = response.get('Items', [])
+        # Check permissions for the current user
+        permissions_response = permissions_table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('projectId').eq(project_id)
+        )
+        permissions = permissions_response.get('Items', [])
         
-        total_count = len(issues)
-        status_counts = {'open': 0, 'in-progress': 0, 'resolved': 0}
-        for issue in issues:
-            status = issue.get('status', 'open')
-            if status in status_counts:
-                status_counts[status] += 1
-        
-        priority_counts = {'low': 0, 'medium': 0, 'high': 0}
-        for issue in issues:
-            priority = issue.get('priority', 'medium')
-            if priority in priority_counts:
-                priority_counts[priority] += 1
+        user_permission = None
+        for perm in permissions:
+            if perm['userId'] == current_user_sub:
+                user_permission = perm
+                break
         
         return jsonify({
-            'total': total_count,
-            'by_status': status_counts,
-            'by_priority': priority_counts
-        })
+            'projectId': project_id,
+            'currentUserSub': current_user_sub,
+            'userHasAccess': user_permission is not None,
+            'userPermission': user_permission,
+            'allPermissions': permissions
+        }), 200
         
-    except ClientError as e:
-        print(f"DynamoDB error fetching issue stats: {e}")
-        return jsonify(error="Database error occurred"), 500
     except Exception as e:
-        print(f"Error fetching issue stats: {e}")
-        return jsonify(error="Failed to fetch issue statistics"), 500
+        print(f"Error in debug permissions: {e}")
+        return jsonify(error=str(e)), 500
+
+# NEW: Debug endpoint to check all issues
+@app.route('/api/debug/issues', methods=['GET'])
+@token_required
+def debug_all_issues(current_user_sub):
+    """Debug endpoint to see all issues in the system"""
+    try:
+        response = issues_table.scan()
+        issues = response.get('Items', [])
+        
+        return jsonify({
+            'totalIssues': len(issues),
+            'currentUserSub': current_user_sub,
+            'issues': [serialize_issue(issue) for issue in issues]
+        }), 200
+        
+    except Exception as e:
+        print(f"Error in debug issues: {e}")
+        return jsonify(error=str(e)), 500
 
 # --- Error Handlers ---
 @app.errorhandler(404)

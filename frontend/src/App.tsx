@@ -10,9 +10,9 @@ import { ProjectDashboard } from './Dashboard';
 
 const API_URL = 'http://localhost:4000';
 
-// Types for our issue system
+// Types for our issue system - FIXED to match backend response
 interface Issue {
-  _id: string;
+  id: string;  // Changed from _id to id
   objectId: string;
   title: string;
   description: string;
@@ -21,6 +21,8 @@ interface Issue {
   createdAt: string;
   updatedAt: string;
   author: string;
+  projectId: string;  // Added projectId field
+  sortKey?: string;   // Added optional sortKey field
 }
 
 interface NewIssue {
@@ -28,6 +30,7 @@ interface NewIssue {
   description: string;
   priority: 'low' | 'medium' | 'high';
   author: string;
+  projectId: string;  // Added projectId field
 }
 
 // Project interface - should match what's returned from your API
@@ -242,7 +245,7 @@ const IssueItem = ({ issue, onStatusChange }: { issue: Issue; onStatusChange: (i
       <div className="flex gap-2">
         <select 
           value={issue.status} 
-          onChange={(e) => onStatusChange(issue._id, e.target.value)}
+          onChange={(e) => onStatusChange(issue.id, e.target.value)}
           className="text-xs border border-slate-300 rounded px-2 py-1"
         >
           <option value="open">Open</option>
@@ -273,7 +276,8 @@ const IssueForm = ({ onSubmit, onCancel, defaultAuthor, projectId }: {
       title: title.trim(),
       description: description.trim(),
       priority,
-      author: author.trim()
+      author: author.trim(),
+      projectId  // Include projectId in the submission
     });
     
     setTitle('');
@@ -355,48 +359,71 @@ const IssueForm = ({ onSubmit, onCancel, defaultAuthor, projectId }: {
   );
 };
 
-const IssuesPanel = ({ objectData, authToken, projectId }: { 
-  objectData: any; 
-  authToken: string; 
-  projectId: string;
-}) => {
-  const [issues, setIssues] = useState<Issue[]>([]);
+// Updated IssuesPanel component with better error handling and debugging
+// Updated IssuesPanel component with better objectId handling
+
+const IssuesPanel = ({ objectData, authToken, projectId, user }) => {
+  const [issues, setIssues] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState(null);
+  const [debugInfo, setDebugInfo] = useState(null);
 
-  const objectId = objectData?.objectUUID || objectData?.objectName || 'unknown';
+  // FIXED: Use a more consistent objectId
+  const objectId = objectData?.objectUUID || objectData?.objectName || objectData?.revitName || 'unknown';
 
   // Helper function to make authenticated API calls
-  const makeAuthenticatedRequest = async (url: string, options: RequestInit = {}) => {
+  const makeAuthenticatedRequest = async (url, options = {}) => {
     const headers = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${authToken}`,
       ...options.headers,
     };
 
-    return fetch(url, {
+    const response = await fetch(url, {
       ...options,
       headers,
     });
+
+    console.log(`API ${options.method || 'GET'} ${url}:`, {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    });
+
+    return response;
   };
 
+  // FIXED: Always fetch issues when projectId is available
   useEffect(() => {
-    if (objectData && objectId !== 'unknown') {
+    if (projectId) {
+      console.log('Fetching issues for project:', projectId);
       fetchIssues();
     }
-  }, [objectData, objectId]);
+  }, [projectId]);
 
   const fetchIssues = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await makeAuthenticatedRequest(`${API_URL}/api/issues/${encodeURIComponent(objectId)}`);
+      console.log('Fetching issues for project:', projectId);
+      const response = await makeAuthenticatedRequest(
+        `${API_URL}/api/issues?projectId=${projectId}`
+      );
+      
       if (!response.ok) {
-        throw new Error('Failed to fetch issues');
+        if (response.status === 404) {
+          console.log('No issues found for project:', projectId);
+          setIssues([]);
+          return;
+        }
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to fetch issues: ${response.status}`);
       }
+      
       const data = await response.json();
-      setIssues(data);
+      console.log('Fetched issues:', data);
+      setIssues(Array.isArray(data) ? data : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       console.error('Error fetching issues:', err);
@@ -405,26 +432,35 @@ const IssuesPanel = ({ objectData, authToken, projectId }: {
     }
   };
 
-  const createIssue = async (newIssue: NewIssue) => {
+  const createIssue = async (newIssue) => {
     setLoading(true);
     setError(null);
     try {
+      const issueData = {
+        ...newIssue,
+        objectId: objectId, // This will be stored as a regular attribute
+        projectId
+      };
+      
+      console.log('Creating issue:', issueData);
+      
       const response = await makeAuthenticatedRequest(`${API_URL}/api/issues`, {
         method: 'POST',
-        body: JSON.stringify({
-          ...newIssue,
-          objectId,
-          projectId
-        }),
+        body: JSON.stringify(issueData),
       });
       
       if (!response.ok) {
-        throw new Error('Failed to create issue');
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Create issue error:', errorData);
+        throw new Error(errorData.error || `Failed to create issue: ${response.status}`);
       }
       
       const createdIssue = await response.json();
+      console.log('Created issue:', createdIssue);
+      
       setIssues(prev => [createdIssue, ...prev]);
       setShowForm(false);
+      
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
       console.error('Error creating issue:', err);
@@ -433,22 +469,27 @@ const IssuesPanel = ({ objectData, authToken, projectId }: {
     }
   };
 
-  const updateIssueStatus = async (issueId: string, status: string) => {
+  const updateIssueStatus = async (issueId, status) => {
     setLoading(true);
     setError(null);
     try {
+      console.log('Updating issue status:', { issueId, status });
+      
       const response = await makeAuthenticatedRequest(`${API_URL}/api/issues/${issueId}`, {
         method: 'PUT',
         body: JSON.stringify({ status }),
       });
       
       if (!response.ok) {
-        throw new Error('Failed to update issue');
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Update issue error:', errorData);
+        throw new Error(errorData.error || `Failed to update issue: ${response.status}`);
       }
       
       const updatedIssue = await response.json();
+      console.log('Updated issue:', updatedIssue);
       setIssues(prev => prev.map(issue => 
-        issue._id === issueId ? updatedIssue : issue
+        issue.id === issueId ? updatedIssue : issue
       ));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -463,9 +504,26 @@ const IssuesPanel = ({ objectData, authToken, projectId }: {
       <div className="p-4 text-center text-slate-500">
         <MessageCircle className="mx-auto w-12 h-12 mb-2" />
         <p>Select an object to view and manage issues.</p>
+        <p className="text-sm mt-2">Issues for Project: {projectId}</p>
+        {issues.length > 0 && (
+          <div className="mt-4">
+            <h4 className="font-semibold mb-2">All Project Issues ({issues.length})</h4>
+            <div className="space-y-2 text-left">
+              {issues.map((issue) => (
+                <IssueItem 
+                  key={issue.id}
+                  issue={issue}
+                  onStatusChange={updateIssueStatus}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
+
+  const defaultAuthor = user?.attributes?.email || user?.username || '';
 
   return (
     <div className="p-4">
@@ -496,7 +554,7 @@ const IssuesPanel = ({ objectData, authToken, projectId }: {
         <IssueForm 
           onSubmit={createIssue}
           onCancel={() => setShowForm(false)}
-          defaultAuthor=""
+          defaultAuthor={defaultAuthor}
           projectId={projectId}
         />
       )}
@@ -512,14 +570,14 @@ const IssuesPanel = ({ objectData, authToken, projectId }: {
         {!loading && issues.length === 0 && (
           <div className="text-center py-8 text-slate-500">
             <MessageCircle className="mx-auto w-8 h-8 mb-2" />
-            <p className="text-sm">No issues found for this object.</p>
+            <p className="text-sm">No issues found for this project.</p>
             <p className="text-xs text-slate-400 mt-1">Click "Add Issue" to create the first one.</p>
           </div>
         )}
         
         {!loading && issues.map((issue) => (
           <IssueItem 
-            key={issue._id} 
+            key={issue.id}
             issue={issue}
             onStatusChange={updateIssueStatus}
           />
@@ -529,11 +587,12 @@ const IssuesPanel = ({ objectData, authToken, projectId }: {
   );
 };
 
-const PropertiesPanel = ({ data, onClear, authToken, projectId }: { 
+const PropertiesPanel = ({ data, onClear, authToken, projectId, user }: { 
   data: any | null; 
   onClear: () => void; 
   authToken: string;
   projectId: string;
+  user: any;
 }) => {
   const [activeTab, setActiveTab] = useState<'properties' | 'issues'>('properties');
 
@@ -600,6 +659,7 @@ const PropertiesPanel = ({ data, onClear, authToken, projectId }: {
           objectData={data} 
           authToken={authToken} 
           projectId={projectId}
+          user={user}
         />
       )}
     </div>
@@ -680,6 +740,7 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
               onClear={() => setSelectedObjectData(null)} 
               authToken={authToken}
               projectId={activeProject.projectId}
+              user={user}
             />
           </aside>
         </main>
