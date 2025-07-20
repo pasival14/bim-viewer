@@ -541,6 +541,7 @@ const DeleteConfirmationModal = ({
 
 // --- Main Dashboard Component ---
 export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut, userAttrsLoading = false }: DashboardProps) => {
+  console.log('User attributes:', user?.attributes);
   const [projects, setProjects] = useState<Project[]>([]);
   const [filteredProjects, setFilteredProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -605,6 +606,14 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut, us
     setSharingProject(project);
   };
 
+  const displayName =
+    user?.attributes?.name ||
+    (user?.attributes && (user.attributes as any)['custom:Name']) ||
+    user?.attributes?.email ||
+    user?.username ||
+    'User';
+  const initials = displayName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0,2);
+
   return (
     <div className="w-screen h-screen bg-slate-50 flex flex-col">
       {/* Modals */}
@@ -665,13 +674,7 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut, us
             <Menu as="div" className="relative inline-block text-left">
               <Menu.Button className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg focus:outline-none">
                 {/* User Avatar (Initials) */}
-                <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-sky-500 text-white font-bold text-lg">
-                  {userAttrsLoading
-                    ? <span className="animate-pulse bg-sky-300 w-6 h-6 rounded-full" />
-                    : (user?.attributes?.name
-                        ? user.attributes.name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0,2)
-                        : user?.attributes?.email?.[0]?.toUpperCase() || 'U')}
-                </span>
+                <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-sky-500 text-white font-bold text-lg">{initials}</span>
                 <span className="hidden md:inline text-slate-700 font-medium">
                   {userAttrsLoading
                     ? <span className="inline-block w-24 h-4 bg-slate-200 rounded animate-pulse" />

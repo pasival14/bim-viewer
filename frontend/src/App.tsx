@@ -727,6 +727,8 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
   const [exposure, setExposure] = useState(1.0);
   const [ambientIntensity, setAmbientIntensity] = useState(1.5);
   const [autoRotate, setAutoRotate] = useState(false);
+  // Store fetched user attributes
+  const [userAttributes, setUserAttributes] = useState<{ [key: string]: any }>({});
 
   // Get the current user's token and attributes when the component mounts
   useEffect(() => {
@@ -740,7 +742,8 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
           throw new Error('No ID token found');
         }
         // Fetch user attributes (including name)
-        await fetchUserAttributes();
+        const attrs = await fetchUserAttributes();
+        setUserAttributes(attrs);
         setUserAttrsLoading(false);
       } catch (error) {
         console.error('Error getting auth token or user attributes:', error);
@@ -866,8 +869,9 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
                     user={{
                       username: user?.username ?? '',
                       attributes: {
-                        ...user?.attributes,
-                        email: user?.attributes?.email ?? '',
+                        ...userAttributes,
+                        email: userAttributes?.email ?? '',
+                        name: userAttributes?.name ?? '',
                       },
                     }}
                   />
@@ -904,8 +908,9 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
         user={{
           username: user?.username ?? '',
           attributes: {
-            ...user?.attributes,
-            email: user?.attributes?.email ?? '',
+            ...userAttributes,
+            email: userAttributes?.email ?? '',
+            name: userAttributes?.name ?? '',
           },
         }}
         userAttrsLoading={userAttrsLoading}
