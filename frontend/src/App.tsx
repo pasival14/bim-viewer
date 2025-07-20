@@ -1,9 +1,8 @@
-import React, { Suspense, useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Canvas, useLoader, useThree } from '@react-three/fiber';
+import React, { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, Html, useGLTF, useProgress } from '@react-three/drei';
-import { Building, UploadCloud, Box, X, MessageCircle, Plus, Send, AlertCircle, Clock, User, LogOut, ArrowLeft, Settings, Sun, RotateCcw, Eye, Lightbulb, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Box, X, MessageCircle, Plus, Send, AlertCircle, Clock, User, LogOut, ArrowLeft, Settings } from 'lucide-react';
 import type { Object3D } from 'three';
-import * as THREE from 'three';
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { fetchUserAttributes } from 'aws-amplify/auth';
 import { ProjectDashboard } from './Dashboard';
@@ -401,22 +400,21 @@ const IssueForm = ({ onSubmit, onCancel, defaultAuthor, projectId }: {
 // Updated IssuesPanel component with better error handling and debugging
 // Updated IssuesPanel component with better objectId handling
 
-const IssuesPanel = ({ objectData, authToken, projectId, user }) => {
-  const [issues, setIssues] = useState([]);
+const IssuesPanel = ({ objectData, authToken, projectId, user }: { objectData: any; authToken: string; projectId: string; user: { username: string; attributes: { email: string; [key: string]: any } } }) => {
+  const [issues, setIssues] = useState<Issue[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [debugInfo, setDebugInfo] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   // FIXED: Use a more consistent objectId
   const objectId = objectData?.objectUUID || objectData?.objectName || objectData?.revitName || 'unknown';
 
   // Helper function to make authenticated API calls
-  const makeAuthenticatedRequest = async (url, options = {}) => {
+  const makeAuthenticatedRequest = async (url: string, options: { [key: string]: any } = {}) => {
     const headers = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${authToken}`,
-      ...options.headers,
+      ...(options.headers || {}),
     };
 
     const response = await fetch(url, {
@@ -471,7 +469,7 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }) => {
     }
   };
 
-  const createIssue = async (newIssue) => {
+  const createIssue = async (newIssue: NewIssue) => {
     setLoading(true);
     setError(null);
     try {
@@ -508,7 +506,7 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }) => {
     }
   };
 
-  const updateIssueStatus = async (issueId, status) => {
+  const updateIssueStatus = async (issueId: string, status: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -626,7 +624,7 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }) => {
   );
 };
 
-const PropertiesPanel = ({ data, onClear, authToken, projectId, user }) => {
+const PropertiesPanel = ({ data, onClear, authToken, projectId, user }: { data: any; onClear: () => void; authToken: string; projectId: string; user: { username: string; attributes: { email: string; [key: string]: any } } }) => {
   const [activeTab, setActiveTab] = useState<'properties' | 'issues'>('properties');
 
   if (!data || Object.keys(data).length === 0) {
