@@ -1,7 +1,7 @@
 import React, { Suspense, useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Canvas, useLoader } from '@react-three/fiber';
+import { Canvas, useLoader, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, Html, useGLTF, useProgress } from '@react-three/drei';
-import { Building, UploadCloud, Box, X, MessageCircle, Plus, Send, AlertCircle, Clock, User, LogOut, ArrowLeft } from 'lucide-react';
+import { Building, UploadCloud, Box, X, MessageCircle, Plus, Send, AlertCircle, Clock, User, LogOut, ArrowLeft, Settings, Sun, RotateCcw, Eye, Lightbulb, ChevronRight, ChevronLeft } from 'lucide-react';
 import type { Object3D } from 'three';
 import * as THREE from 'three';
 import { fetchAuthSession } from 'aws-amplify/auth';
@@ -83,7 +83,7 @@ const ModelErrorFallback = ({ error }: { error: Error }) => (
   </Html>
 );
 
-const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any) => void }) => {
+const Model = ({ url, onObjectClick, wireframe }: { url: string; onObjectClick: (data: any) => void; wireframe?: boolean }) => {
   if (!url || url === 'undefined' || url === 'null') {
     return (
       <Html center>
@@ -207,10 +207,15 @@ const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any)
       if (child.isMesh) {
         child.onClick = handleMeshClick;
         child.raycast = child.raycast;
+        if (wireframe) {
+          child.material.wireframe = true;
+        } else {
+          child.material.wireframe = false;
+        }
       }
     });
     return clonedScene;
-  }, [scene, handleMeshClick]);
+  }, [scene, handleMeshClick, wireframe]);
 
   if (!scene || !clickableScene) {
     return (
@@ -694,6 +699,15 @@ const PropertiesPanel = ({ data, onClear, authToken, projectId, user }) => {
   );
 };
 
+// Exposure controller for R3F Canvas
+const ExposureController = ({ exposure }: { exposure: number }) => {
+  const { gl } = useThree();
+  useEffect(() => {
+    gl.toneMappingExposure = exposure;
+  }, [gl, exposure]);
+  return null;
+};
+
 const App: React.FC<AppProps> = ({ signOut, user }) => {
   const [selectedObjectData, setSelectedObjectData] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -702,6 +716,14 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
   const [userAttributes, setUserAttributes] = useState<{ [key: string]: any }>({});
   const [userAttrsLoading, setUserAttrsLoading] = useState(true);
   const [panelMinimized, setPanelMinimized] = useState(false);
+  // Viewer settings state
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bgColor, setBgColor] = useState('#18181b');
+  const [wireframe, setWireframe] = useState(false);
+  const [punctualLights, setPunctualLights] = useState(false);
+  const [exposure, setExposure] = useState(1.0);
+  const [ambientIntensity, setAmbientIntensity] = useState(1.5);
+  const [autoRotate, setAutoRotate] = useState(false);
 
   // Get the current user's token and attributes when the component mounts
   useEffect(() => {
@@ -759,13 +781,65 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
         </header>
         <main className="flex-1 relative bg-black">
           <div className="w-full h-full">
-            <Canvas camera={{ position: [0, 5, 10], fov: 50 }}>
+            {/* Viewer Settings Floating Button */}
+            <button
+              className="absolute top-6 right-24 z-30 bg-white shadow-xl rounded-full p-3 border border-slate-200 hover:bg-slate-100 transition"
+              onClick={() => setSettingsOpen((v) => !v)}
+              title="Viewer settings"
+            >
+              <Settings size={22} className="text-slate-700" />
+            </button>
+            {/* Viewer Settings Panel */}
+            {settingsOpen && (
+              <div className="absolute top-20 right-6 z-40 w-80 max-w-full bg-white rounded-xl shadow-2xl border border-slate-200 p-5 flex flex-col gap-4 animate-fade-in">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-bold text-slate-700 text-lg flex items-center gap-2"><Settings size={18}/> Viewer Settings</span>
+                  <button onClick={() => setSettingsOpen(false)} className="p-1 text-slate-400 hover:text-slate-700"><X size={20}/></button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium text-slate-700 flex-shrink-0">Background</label>
+                  <input type="color" value={bgColor} onChange={e => setBgColor(e.target.value)} className="w-8 h-8 border rounded" />
+                  <input type="text" value={bgColor} onChange={e => setBgColor(e.target.value)} className="ml-2 w-24 border rounded px-2 py-1 text-xs" />
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium text-slate-700 flex-shrink-0">Wireframe</label>
+                  <button onClick={() => setWireframe(v => !v)} className={`ml-auto px-3 py-1 rounded ${wireframe ? 'bg-sky-600 text-white' : 'bg-slate-200 text-slate-700'}`}>{wireframe ? 'On' : 'Off'}</button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium text-slate-700 flex-shrink-0">Punctual Lights</label>
+                  <button onClick={() => setPunctualLights(v => !v)} className={`ml-auto px-3 py-1 rounded ${punctualLights ? 'bg-sky-600 text-white' : 'bg-slate-200 text-slate-700'}`}>{punctualLights ? 'On' : 'Off'}</button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium text-slate-700 flex-shrink-0">Exposure</label>
+                  <input type="range" min={0.1} max={2.5} step={0.01} value={exposure} onChange={e => setExposure(Number(e.target.value))} className="flex-1" />
+                  <span className="ml-2 text-xs w-8 text-right">{exposure.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium text-slate-700 flex-shrink-0">Ambient Intensity</label>
+                  <input type="range" min={0} max={5} step={0.01} value={ambientIntensity} onChange={e => setAmbientIntensity(Number(e.target.value))} className="flex-1" />
+                  <span className="ml-2 text-xs w-8 text-right">{ambientIntensity.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-medium text-slate-700 flex-shrink-0">Auto Rotate</label>
+                  <button onClick={() => setAutoRotate(v => !v)} className={`ml-auto px-3 py-1 rounded ${autoRotate ? 'bg-sky-600 text-white' : 'bg-slate-200 text-slate-700'}`}>{autoRotate ? 'On' : 'Off'}</button>
+                </div>
+              </div>
+            )}
+            <Canvas camera={{ position: [0, 5, 10], fov: 50 }} style={{ background: bgColor }}>
+              <ExposureController exposure={exposure} />
               <ErrorBoundary FallbackComponent={ModelErrorFallback}>
                 <Suspense fallback={<Loader />}>
-                  <ambientLight intensity={1.5} />
+                  <ambientLight intensity={ambientIntensity} />
                   <Environment preset="city" />
-                  <Model url={activeProject.modelUrl} onObjectClick={setSelectedObjectData} />
-                  <OrbitControls />
+                  {punctualLights && (
+                    <>
+                      <directionalLight position={[5, 10, 7.5]} intensity={1.5} castShadow />
+                      <pointLight position={[-10, 10, -10]} intensity={1.2} />
+                      <spotLight position={[0, 20, 0]} angle={0.3} penumbra={1} intensity={1.2} castShadow />
+                    </>
+                  )}
+                  <Model url={activeProject.modelUrl} onObjectClick={setSelectedObjectData} wireframe={wireframe} />
+                  <OrbitControls autoRotate={autoRotate} />
                 </Suspense>
               </ErrorBoundary>
             </Canvas>
