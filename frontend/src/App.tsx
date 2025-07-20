@@ -859,7 +859,13 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
                     onClear={() => setSelectedObjectData(null)} 
                     authToken={authToken}
                     projectId={activeProject.projectId}
-                    user={{ ...user, attributes: { ...userAttributes } }}
+                    user={{
+                      ...user,
+                      attributes: {
+                        email: userAttributes.email || user?.attributes?.email || '',
+                        ...userAttributes,
+                      },
+                    }}
                   />
                 </div>
               </div>
@@ -891,7 +897,13 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
     return user && authToken ? (
       <ProjectDashboard
         authToken={authToken}
-        user={{ ...user, attributes: { ...userAttributes } }}
+        user={{
+          ...user,
+          attributes: {
+            email: userAttributes.email || user?.attributes?.email || '',
+            ...userAttributes,
+          },
+        }}
         userAttrsLoading={userAttrsLoading}
         onSelectProject={(project) => setActiveProject(project)}
         signOut={handleSignOut}
