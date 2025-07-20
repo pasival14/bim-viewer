@@ -54,7 +54,11 @@ export const AuthWrapper: React.FC<AuthWrapperProps> = () => {
         components={authComponents}
       >
         {({ signOut, user }) => (
-          <App signOut={signOut} user={user} />
+          <App signOut={signOut} user={
+            user
+              ? { username: user.username ?? '', attributes: { ...user.attributes, email: user.attributes?.email ?? '' } }
+              : { username: '', attributes: { email: '' } }
+          } />
         )}
       </Authenticator>
     </div>
