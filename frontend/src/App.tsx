@@ -717,7 +717,6 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
   const [error, setError] = useState<string | null>(null);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [authToken, setAuthToken] = useState<string>('');
-  const [userAttributes, setUserAttributes] = useState<{ [key: string]: any }>({});
   const [userAttrsLoading, setUserAttrsLoading] = useState(true);
   const [panelMinimized, setPanelMinimized] = useState(false);
   // Viewer settings state
@@ -741,8 +740,7 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
           throw new Error('No ID token found');
         }
         // Fetch user attributes (including name)
-        const attrs = await fetchUserAttributes();
-        setUserAttributes(attrs);
+        await fetchUserAttributes();
         setUserAttrsLoading(false);
       } catch (error) {
         console.error('Error getting auth token or user attributes:', error);
