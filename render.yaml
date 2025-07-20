@@ -26,8 +26,8 @@ services:
     env: static
     plan: free
     buildCommand: npm install && npm run build
-    publishPath: build
+    staticPublishPath: build
     envVars:
       - key: REACT_APP_API_URL
-        value: https://bim-backend.onrender.com  # Replace with your actual backend Render URL after first deploy
+        value: https://bim-backend.onrender.com
     rootDir: frontend
