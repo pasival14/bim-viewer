@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: bim-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: AWS_REGION
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: COGNITO_USER_POOL_ID
+        sync: false
+      - key: DYNAMODB_TABLE_NAME
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      # Add any other backend env vars here
+    rootDir: backend
+
+  - type: static
+    name: bim-frontend
+    env: static
+    plan: free
+    buildCommand: npm install && npm run build
+    staticPublishPath: build
+    envVars:
+      - key: REACT_APP_API_URL
+        value: https://bim-backend.onrender.com  # Replace with your actual backend Render URL after first deploy
+    rootDir: frontend
