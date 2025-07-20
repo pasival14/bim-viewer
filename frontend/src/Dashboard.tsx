@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Building, Plus, UploadCloud, Loader, AlertCircle, Search, Calendar, User, LogOut, Trash2, Edit3, Eye, MoreVertical, Share2 } from 'lucide-react';
+import { Building, Plus, UploadCloud, Loader, AlertCircle, Search, Calendar, Trash2, Edit3, Eye, MoreVertical, Share2 } from 'lucide-react';
 import { ShareModal } from './ShareModal';
 import { ProfileModal } from './ProfileModal';
 import { Menu, Transition } from '@headlessui/react';

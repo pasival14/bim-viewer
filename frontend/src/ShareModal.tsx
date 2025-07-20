@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Loader, Send, X } from 'lucide-react';
+import { Loader, X } from 'lucide-react';
 
 const API_URL = 'http://localhost:4000';
 
