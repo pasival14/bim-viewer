@@ -4,3 +4,5 @@ Werkzeug==2.3.7
 boto3==1.34.0
 botocore==1.34.0
 python-dotenv
+requests
+python-jose
