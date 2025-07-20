@@ -690,7 +690,13 @@ const PropertiesPanel = ({ data, onClear, authToken, projectId, user }: { data: 
           objectData={data} 
           authToken={authToken} 
           projectId={projectId}
-          user={user}
+          user={{
+            username: user?.username ?? '',
+            attributes: {
+              ...user?.attributes,
+              email: user?.attributes?.email ?? '',
+            },
+          }}
         />
       )}
     </div>
@@ -860,10 +866,10 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
                     authToken={authToken}
                     projectId={activeProject.projectId}
                     user={{
-                      ...user,
+                      username: user?.username ?? '',
                       attributes: {
-                        email: userAttributes.email || user?.attributes?.email || '',
-                        ...userAttributes,
+                        ...user?.attributes,
+                        email: user?.attributes?.email ?? '',
                       },
                     }}
                   />
@@ -898,10 +904,10 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
       <ProjectDashboard
         authToken={authToken}
         user={{
-          ...user,
+          username: user?.username ?? '',
           attributes: {
-            email: userAttributes.email || user?.attributes?.email || '',
-            ...userAttributes,
+            ...user?.attributes,
+            email: user?.attributes?.email ?? '',
           },
         }}
         userAttrsLoading={userAttrsLoading}
