@@ -21,12 +21,12 @@ services:
       # Add any other backend env vars here
     rootDir: backend
 
-  - type: static
+  - type: web
     name: bim-frontend
     env: static
     plan: free
     buildCommand: npm install && npm run build
-    staticPublishPath: build
+    publishPath: build
     envVars:
       - key: REACT_APP_API_URL
         value: https://bim-backend.onrender.com  # Replace with your actual backend Render URL after first deploy
