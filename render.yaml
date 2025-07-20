@@ -2,7 +2,6 @@ services:
   - type: web
     name: bim-backend
     env: python
-    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
     envVars:
@@ -24,7 +23,6 @@ services:
   - type: web
     name: bim-frontend
     env: static
-    plan: free
     buildCommand: npm install && npm run build
     staticPublishPath: build
     envVars:
