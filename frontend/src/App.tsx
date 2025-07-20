@@ -1,12 +1,13 @@
 import React, { Suspense, useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Canvas, useLoader } from '@react-three/fiber';
-import { OrbitControls, Environment, Html, useGLTF } from '@react-three/drei';
+import { OrbitControls, Environment, Html, useGLTF, useProgress } from '@react-three/drei';
 import { Building, UploadCloud, Box, X, MessageCircle, Plus, Send, AlertCircle, Clock, User, LogOut, ArrowLeft } from 'lucide-react';
 import type { Object3D } from 'three';
 import * as THREE from 'three';
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { fetchUserAttributes } from 'aws-amplify/auth';
 import { ProjectDashboard } from './Dashboard';
+import { ErrorBoundary } from 'react-error-boundary';
 
 const API_URL = 'http://localhost:4000';
 
@@ -54,38 +55,36 @@ interface AppProps {
   };
 }
 
-const Loader = () => (
+const Loader = () => {
+  const { progress } = useProgress();
+  return (
+    <Html center>
+      <div className="flex flex-col items-center justify-center text-slate-600 p-8">
+        <div className="w-64 bg-slate-200 rounded-full h-3 mb-4">
+          <div
+            className="bg-sky-600 h-3 rounded-full transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <p className="text-sm font-medium">Loading 3D Model...</p>
+        <p className="text-xs text-slate-500 mt-1">{Math.round(progress)}%</p>
+      </div>
+    </Html>
+  );
+};
+
+const ModelErrorFallback = ({ error }: { error: Error }) => (
   <Html center>
-    <div className="flex items-center justify-center text-slate-500">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-500"></div>
-      <span className="ml-2">Loading...</span>
+    <div className="flex flex-col items-center justify-center text-red-500 p-4">
+      <AlertCircle className="w-12 h-12 mb-2" />
+      <p className="text-center">Failed to load model</p>
+      <p className="text-sm text-gray-500 text-center">{error.message || 'Unknown error'}</p>
     </div>
   </Html>
 );
 
 const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any) => void }) => {
-  const [loadingProgress, setLoadingProgress] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  console.log('Model component render:', { url, isLoading, loadingProgress, loadError });
-
-  // Add timeout to prevent infinite loading
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      if (isLoading) {
-        console.log('Loading timeout reached, setting error');
-        setLoadError('Loading timeout - please try refreshing the page');
-        setIsLoading(false);
-      }
-    }, 30000); // 30 second timeout
-
-    return () => clearTimeout(timeout);
-  }, [isLoading]);
-
-  // Add validation for URL
   if (!url || url === 'undefined' || url === 'null') {
-    console.log('Invalid URL detected:', url);
     return (
       <Html center>
         <div className="flex flex-col items-center justify-center text-red-500 p-4">
@@ -97,26 +96,8 @@ const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any)
       </Html>
     );
   }
-
-  console.log('Starting to load model with URL:', url);
-
-  // Use useGLTF instead of useLoader for GLB files
+  // Always call useGLTF unconditionally
   const { scene } = useGLTF(url);
-  
-  console.log('useGLTF result:', { scene });
-
-  // Hide loading when model is loaded
-  useEffect(() => {
-    console.log('useEffect triggered, scene:', scene);
-    if (scene) {
-      console.log('Model loaded successfully');
-      setLoadingProgress(100);
-      setTimeout(() => {
-        console.log('Setting isLoading to false');
-        setIsLoading(false);
-      }, 500); // Small delay to show 100%
-    }
-  }, [scene]);
 
   // Define handleMeshClick function with useCallback to prevent recreation
   const handleMeshClick = useCallback((event: any) => {
@@ -218,53 +199,19 @@ const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any)
     onObjectClick(objectData);
   }, [onObjectClick]);
 
-  // Move useMemo to the top level, before any conditional returns
+  // useMemo for clickableScene
   const clickableScene = useMemo(() => {
     if (!scene) return null;
     const clonedScene = scene.clone();
-    clonedScene.traverse((child) => {
-      if ((child as any).isMesh) {
-        (child as any).onClick = handleMeshClick;
-        (child as any).raycast = child.raycast;
+    clonedScene.traverse((child: any) => {
+      if (child.isMesh) {
+        child.onClick = handleMeshClick;
+        child.raycast = child.raycast;
       }
     });
     return clonedScene;
   }, [scene, handleMeshClick]);
 
-  // Show loading progress
-  if (isLoading) {
-    return (
-      <Html center>
-        <div className="flex flex-col items-center justify-center text-slate-600 p-8">
-          <div className="w-64 bg-slate-200 rounded-full h-3 mb-4">
-            <div
-              className="bg-sky-600 h-3 rounded-full transition-all duration-300"
-              style={{ width: `${loadingProgress}%` }}
-            />
-          </div>
-          <p className="text-sm font-medium">Loading 3D Model...</p>
-          <p className="text-xs text-slate-500 mt-1">{loadingProgress}%</p>
-          <p className="text-xs text-slate-400 mt-2">URL: {url.substring(0, 50)}...</p>
-        </div>
-      </Html>
-    );
-  }
-
-  // Show error if loading failed
-  if (loadError) {
-    return (
-      <Html center>
-        <div className="flex flex-col items-center justify-center text-red-500 p-4">
-          <AlertCircle className="w-12 h-12 mb-2" />
-          <p className="text-center">Failed to load model</p>
-          <p className="text-sm text-gray-500 text-center">{loadError}</p>
-          <p className="text-xs text-gray-400 mt-2">URL: {url.substring(0, 50)}...</p>
-        </div>
-      </Html>
-    );
-  }
-
-  // If no scene is available, show loading
   if (!scene || !clickableScene) {
     return (
       <Html center>
@@ -754,6 +701,7 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
   const [authToken, setAuthToken] = useState<string>('');
   const [userAttributes, setUserAttributes] = useState<{ [key: string]: any }>({});
   const [userAttrsLoading, setUserAttrsLoading] = useState(true);
+  const [panelMinimized, setPanelMinimized] = useState(false);
 
   // Get the current user's token and attributes when the component mounts
   useEffect(() => {
@@ -809,30 +757,53 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
             Sign Out
           </button>
         </header>
-        
-        <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          <div className="flex-1">
+        <main className="flex-1 relative bg-black">
+          <div className="w-full h-full">
             <Canvas camera={{ position: [0, 5, 10], fov: 50 }}>
-              <Suspense fallback={<Loader />}>
-                <ambientLight intensity={1.5} />
-                <Environment preset="city" />
-                <Model url={activeProject.modelUrl} onObjectClick={setSelectedObjectData} />
-                <OrbitControls />
-              </Suspense>
+              <ErrorBoundary FallbackComponent={ModelErrorFallback}>
+                <Suspense fallback={<Loader />}>
+                  <ambientLight intensity={1.5} />
+                  <Environment preset="city" />
+                  <Model url={activeProject.modelUrl} onObjectClick={setSelectedObjectData} />
+                  <OrbitControls />
+                </Suspense>
+              </ErrorBoundary>
             </Canvas>
+            {/* Floating Properties Panel */}
+            {!panelMinimized && (
+              <div className="absolute top-6 right-6 w-[20vw] min-w-[260px] max-w-[400px] max-h-[calc(100vh-5rem)] bg-white rounded-xl shadow-2xl z-20 overflow-hidden border border-slate-200 flex flex-col">
+                <div className="flex justify-end p-2 bg-slate-50 border-b border-slate-100">
+                  <button
+                    onClick={() => setPanelMinimized(true)}
+                    className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded"
+                    title="Minimize panel"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  <PropertiesPanel 
+                    data={selectedObjectData} 
+                    onClear={() => setSelectedObjectData(null)} 
+                    authToken={authToken}
+                    projectId={activeProject.projectId}
+                    user={{ ...user, attributes: { ...userAttributes } }}
+                  />
+                </div>
+              </div>
+            )}
+            {/* Minimized Floating Button */}
+            {panelMinimized && (
+              <button
+                className="absolute top-6 right-6 z-30 bg-white shadow-xl rounded-full p-3 border border-slate-200 hover:bg-slate-100 transition"
+                onClick={() => setPanelMinimized(false)}
+                title="Show object details"
+              >
+                <Box size={24} className="text-slate-700" />
+              </button>
+            )}
           </div>
-          
-          <aside className="w-full lg:w-96 bg-white overflow-y-auto shadow-lg">
-            <PropertiesPanel 
-              data={selectedObjectData} 
-              onClear={() => setSelectedObjectData(null)} 
-              authToken={authToken}
-              projectId={activeProject.projectId}
-              user={{ ...user, attributes: { ...userAttributes } }}
-            />
-          </aside>
         </main>
-        
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded m-4">
             <div className="flex items-center gap-2">

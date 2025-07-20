@@ -254,36 +254,33 @@ def get_projects(current_user_sub):
         
         project_details = projects_response.get('Responses', {}).get(DYNAMODB_PROJECTS_TABLE, [])
 
-        # --- FIXED: Generate presigned URL with proper error handling ---
+        # --- Prefer compressed file over original ---
         valid_projects = []
         for project in project_details:
             if 'modelKey' in project:
                 print(f"Processing project: {project.get('projectId', 'unknown')}")
                 print(f"Original modelKey: {project['modelKey']}")
                 
-                # Always try original file first (for immediate access after creation)
-                presigned_url = generate_presigned_url(S3_BUCKET_NAME, project['modelKey'])
+                # Try compressed file first
+                if project['modelKey'].startswith('uploads/'):
+                    compressed_key = project['modelKey'].replace('uploads/', 'compressed/')
+                else:
+                    compressed_key = f"compressed/{project['modelKey']}"
+                
+                presigned_url = generate_presigned_url(S3_BUCKET_NAME, compressed_key)
                 if presigned_url:
-                    print(f"Using original file: {project['modelKey']}")
+                    print(f"Using compressed file: {compressed_key}")
                     project['modelUrl'] = presigned_url
                     valid_projects.append(project)
                 else:
-                    # Fallback to compressed if original doesn't exist
-                    if project['modelKey'].startswith('uploads/'):
-                        compressed_key = project['modelKey'].replace('uploads/', 'compressed/')
-                    else:
-                        compressed_key = f"compressed/{project['modelKey']}"
-                    
-                    print(f"Original not found, trying compressed: {compressed_key}")
-                    presigned_url = generate_presigned_url(S3_BUCKET_NAME, compressed_key)
+                    # Fallback to original if compressed doesn't exist
+                    presigned_url = generate_presigned_url(S3_BUCKET_NAME, project['modelKey'])
                     if presigned_url:
-                        print(f"Found compressed file, using: {compressed_key}")
+                        print(f"Using original file: {project['modelKey']}")
                         project['modelUrl'] = presigned_url
                         valid_projects.append(project)
                     else:
                         print(f"Warning: Could not generate presigned URL for project {project.get('projectId', 'unknown')}")
-                        # Optionally include projects without valid URLs, or skip them
-                        # For now, we'll skip projects with invalid URLs
                         continue
             else:
                 print(f"Warning: Project {project.get('projectId', 'unknown')} has no modelKey")
