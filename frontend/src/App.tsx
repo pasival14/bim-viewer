@@ -1,11 +1,11 @@
-import React, { Suspense, useState, useRef, useEffect, useMemo } from 'react';
+import React, { Suspense, useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Canvas, useLoader } from '@react-three/fiber';
-import { OrbitControls, Environment, Html } from '@react-three/drei';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+import { OrbitControls, Environment, Html, useGLTF } from '@react-three/drei';
 import { Building, UploadCloud, Box, X, MessageCircle, Plus, Send, AlertCircle, Clock, User, LogOut, ArrowLeft } from 'lucide-react';
 import type { Object3D } from 'three';
 import * as THREE from 'three';
 import { fetchAuthSession } from 'aws-amplify/auth';
+import { fetchUserAttributes } from 'aws-amplify/auth';
 import { ProjectDashboard } from './Dashboard';
 
 const API_URL = 'http://localhost:4000';
@@ -64,22 +64,62 @@ const Loader = () => (
 );
 
 const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any) => void }) => {
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  console.log('Model component render:', { url, isLoading, loadingProgress, loadError });
+
+  // Add timeout to prevent infinite loading
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (isLoading) {
+        console.log('Loading timeout reached, setting error');
+        setLoadError('Loading timeout - please try refreshing the page');
+        setIsLoading(false);
+      }
+    }, 30000); // 30 second timeout
+
+    return () => clearTimeout(timeout);
+  }, [isLoading]);
+
   // Add validation for URL
   if (!url || url === 'undefined' || url === 'null') {
+    console.log('Invalid URL detected:', url);
     return (
       <Html center>
         <div className="flex flex-col items-center justify-center text-red-500 p-4">
           <AlertCircle className="w-12 h-12 mb-2" />
           <p className="text-center">Model URL is not available</p>
           <p className="text-sm text-gray-500 text-center">Please check your project configuration</p>
+          <p className="text-xs text-gray-400 mt-2">URL: {url}</p>
         </div>
       </Html>
     );
   }
 
-  const { scene } = useLoader(GLTFLoader, url);
+  console.log('Starting to load model with URL:', url);
 
-  const handleMeshClick = (event: any) => {
+  // Use useGLTF instead of useLoader for GLB files
+  const { scene } = useGLTF(url);
+  
+  console.log('useGLTF result:', { scene });
+
+  // Hide loading when model is loaded
+  useEffect(() => {
+    console.log('useEffect triggered, scene:', scene);
+    if (scene) {
+      console.log('Model loaded successfully');
+      setLoadingProgress(100);
+      setTimeout(() => {
+        console.log('Setting isLoading to false');
+        setIsLoading(false);
+      }, 500); // Small delay to show 100%
+    }
+  }, [scene]);
+
+  // Define handleMeshClick function with useCallback to prevent recreation
+  const handleMeshClick = useCallback((event: any) => {
     console.log('Click detected!', event);
     event.stopPropagation();
     
@@ -176,9 +216,11 @@ const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any)
     
     console.log('Final object data:', objectData);
     onObjectClick(objectData);
-  };
+  }, [onObjectClick]);
 
+  // Move useMemo to the top level, before any conditional returns
   const clickableScene = useMemo(() => {
+    if (!scene) return null;
     const clonedScene = scene.clone();
     clonedScene.traverse((child) => {
       if ((child as any).isMesh) {
@@ -187,7 +229,52 @@ const Model = ({ url, onObjectClick }: { url: string; onObjectClick: (data: any)
       }
     });
     return clonedScene;
-  }, [scene]);
+  }, [scene, handleMeshClick]);
+
+  // Show loading progress
+  if (isLoading) {
+    return (
+      <Html center>
+        <div className="flex flex-col items-center justify-center text-slate-600 p-8">
+          <div className="w-64 bg-slate-200 rounded-full h-3 mb-4">
+            <div
+              className="bg-sky-600 h-3 rounded-full transition-all duration-300"
+              style={{ width: `${loadingProgress}%` }}
+            />
+          </div>
+          <p className="text-sm font-medium">Loading 3D Model...</p>
+          <p className="text-xs text-slate-500 mt-1">{loadingProgress}%</p>
+          <p className="text-xs text-slate-400 mt-2">URL: {url.substring(0, 50)}...</p>
+        </div>
+      </Html>
+    );
+  }
+
+  // Show error if loading failed
+  if (loadError) {
+    return (
+      <Html center>
+        <div className="flex flex-col items-center justify-center text-red-500 p-4">
+          <AlertCircle className="w-12 h-12 mb-2" />
+          <p className="text-center">Failed to load model</p>
+          <p className="text-sm text-gray-500 text-center">{loadError}</p>
+          <p className="text-xs text-gray-400 mt-2">URL: {url.substring(0, 50)}...</p>
+        </div>
+      </Html>
+    );
+  }
+
+  // If no scene is available, show loading
+  if (!scene || !clickableScene) {
+    return (
+      <Html center>
+        <div className="flex flex-col items-center justify-center text-slate-600 p-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-500"></div>
+          <span className="ml-2">Loading...</span>
+        </div>
+      </Html>
+    );
+  }
 
   return (
     <group onClick={handleMeshClick}>
@@ -523,7 +610,7 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }) => {
     );
   }
 
-  const defaultAuthor = user?.attributes?.email || user?.username || '';
+  const defaultAuthor = user?.attributes?.name || user?.attributes?.email || user?.username || '';
 
   return (
     <div className="p-4">
@@ -587,13 +674,7 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }) => {
   );
 };
 
-const PropertiesPanel = ({ data, onClear, authToken, projectId, user }: { 
-  data: any | null; 
-  onClear: () => void; 
-  authToken: string;
-  projectId: string;
-  user: any;
-}) => {
+const PropertiesPanel = ({ data, onClear, authToken, projectId, user }) => {
   const [activeTab, setActiveTab] = useState<'properties' | 'issues'>('properties');
 
   if (!data || Object.keys(data).length === 0) {
@@ -671,10 +752,12 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
   const [error, setError] = useState<string | null>(null);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [authToken, setAuthToken] = useState<string>('');
+  const [userAttributes, setUserAttributes] = useState<{ [key: string]: any }>({});
+  const [userAttrsLoading, setUserAttrsLoading] = useState(true);
 
-  // Get the current user's token when the component mounts
+  // Get the current user's token and attributes when the component mounts
   useEffect(() => {
-    const getAuthToken = async () => {
+    const getAuthTokenAndAttributes = async () => {
       try {
         const session = await fetchAuthSession();
         const idToken = session.tokens?.idToken?.toString();
@@ -683,14 +766,19 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
         } else {
           throw new Error('No ID token found');
         }
+        // Fetch user attributes (including name)
+        const attrs = await fetchUserAttributes();
+        setUserAttributes(attrs);
+        setUserAttrsLoading(false);
       } catch (error) {
-        console.error('Error getting auth token:', error);
+        console.error('Error getting auth token or user attributes:', error);
         setError('Authentication error. Please try signing out and back in.');
+        setUserAttrsLoading(false);
       }
     };
 
     if (user) {
-      getAuthToken();
+      getAuthTokenAndAttributes();
     }
   }, [user]);
 
@@ -740,7 +828,7 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
               onClear={() => setSelectedObjectData(null)} 
               authToken={authToken}
               projectId={activeProject.projectId}
-              user={user}
+              user={{ ...user, attributes: { ...userAttributes } }}
             />
           </aside>
         </main>
@@ -760,7 +848,8 @@ const App: React.FC<AppProps> = ({ signOut, user }) => {
     return user && authToken ? (
       <ProjectDashboard
         authToken={authToken}
-        user={user}
+        user={{ ...user, attributes: { ...userAttributes } }}
+        userAttrsLoading={userAttrsLoading}
         onSelectProject={(project) => setActiveProject(project)}
         signOut={handleSignOut}
       />

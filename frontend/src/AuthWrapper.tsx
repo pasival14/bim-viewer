@@ -1,38 +1,62 @@
 import React from 'react';
-import { Amplify } from 'aws-amplify';
-import { Authenticator } from '@aws-amplify/ui-react';
+import { Authenticator, useTheme, View } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
-import App from './App'; // Your original App component
+import App from './App';
 
-// Configure Amplify with your Cognito User Pool details
-// IMPORTANT: Replace these placeholder values with your actual Cognito details
-const amplifyConfig = {
-  Auth: {
-    Cognito: {
-      region: 'us-east-1',
-      userPoolId: 'us-east-1_Qz0XQbRYF',
-      userPoolClientId: '6trsdho1dueumlof1pqb8hqe67',
-    }
-  }
+interface AuthWrapperProps {
+  // No children needed if App is imported directly
+}
+
+const authComponents = {
+  Header() {
+    const { tokens } = useTheme();
+    return <View textAlign="center" padding={tokens.space.large}></View>;
+  },
 };
 
-Amplify.configure(amplifyConfig);
+// MODIFIED: Added 'name' to the sign-up form
+const formFields = {
+  signUp: {
+    name: {
+      order: 1,
+      label: 'Full Name',
+      placeholder: 'Enter your full name',
+      isRequired: true,
+    },
+    email: {
+      order: 2,
+      label: 'Email Address',
+      placeholder: 'Enter your email address',
+    },
+    password: {
+      order: 3,
+    },
+    confirm_password: {
+      order: 4,
+    },
+  },
+  signIn: {
+    username: {
+      label: 'Email Address',
+      placeholder: 'Enter your email address',
+    },
+    password: {
+    },
+  }
+}
 
-/**
- * This component acts as a gatekeeper. It uses the Amplify Authenticator component.
- * 1. If the user is not logged in, it displays a full sign-in/sign-up UI.
- * 2. If the user is logged in, it renders the main App component, passing down
- * the `user` object and the `signOut` function as props.
- */
-const AuthWrapper: React.FC = () => {
+export const AuthWrapper: React.FC<AuthWrapperProps> = () => {
   return (
-    <Authenticator>
-      {({ signOut, user }) => (
-        // Once authenticated, render the original App component with auth props
-        <App signOut={signOut} user={user} />
-      )}
-    </Authenticator>
+    <div className="flex items-center justify-center min-h-screen bg-slate-100">
+      <Authenticator
+        loginMechanisms={['email']}
+        formFields={formFields}
+        components={authComponents}
+      >
+        {({ signOut, user }) => (
+          <App signOut={signOut} user={user} />
+        )}
+      </Authenticator>
+    </div>
   );
 };
-
-export default AuthWrapper;

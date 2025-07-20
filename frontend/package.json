@@ -11,9 +11,11 @@
   },
   "dependencies": {
     "@aws-amplify/ui-react": "^6.11.2",
+    "@headlessui/react": "^2.2.4",
     "@react-three/drei": "^10.5.1",
     "@react-three/fiber": "^9.2.0",
     "aws-amplify": "^6.15.3",
+    "axios": "^1.10.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "three": "^0.178.0"

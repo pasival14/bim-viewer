@@ -161,15 +161,18 @@ def generate_presigned_url(bucket_name, object_key, expiration=3600):
             print(f"Invalid parameters: bucket_name={bucket_name}, object_key={object_key}")
             return None
             
+        print(f"Generating presigned URL for: {bucket_name}/{object_key}")
+        
         # Check if object exists
         try:
             s3_client.head_object(Bucket=bucket_name, Key=object_key)
+            print(f"✅ Object found: {object_key}")
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
-                print(f"Object not found: {object_key}")
+                print(f"❌ Object not found: {object_key}")
                 return None
             else:
-                print(f"Error checking object existence: {e}")
+                print(f"❌ Error checking object existence: {e}")
                 return None
         
         # Generate presigned URL
@@ -178,12 +181,13 @@ def generate_presigned_url(bucket_name, object_key, expiration=3600):
             Params={'Bucket': bucket_name, 'Key': object_key},
             ExpiresIn=expiration
         )
+        print(f"✅ Generated presigned URL: {response[:100]}...")
         return response
     except ClientError as e:
-        print(f"Error generating presigned URL: {e}")
+        print(f"❌ ClientError generating presigned URL: {e}")
         return None
     except Exception as e:
-        print(f"Unexpected error generating presigned URL: {e}")
+        print(f"❌ Unexpected error generating presigned URL: {e}")
         return None
 
 # Modified create_project endpoint
@@ -199,7 +203,7 @@ def create_project(current_user_sub):
     if file.filename == '' or not allowed_file(file.filename):
         return jsonify(error="Invalid or no file selected"), 400
 
-    filename = f"{uuid.uuid4()}-{secure_filename(file.filename)}"
+    filename = f"uploads/{uuid.uuid4()}-{secure_filename(file.filename)}"
     
     try:
         s3_client.upload_fileobj(file, S3_BUCKET_NAME, filename)
@@ -254,15 +258,33 @@ def get_projects(current_user_sub):
         valid_projects = []
         for project in project_details:
             if 'modelKey' in project:
+                print(f"Processing project: {project.get('projectId', 'unknown')}")
+                print(f"Original modelKey: {project['modelKey']}")
+                
+                # Always try original file first (for immediate access after creation)
                 presigned_url = generate_presigned_url(S3_BUCKET_NAME, project['modelKey'])
                 if presigned_url:
+                    print(f"Using original file: {project['modelKey']}")
                     project['modelUrl'] = presigned_url
                     valid_projects.append(project)
                 else:
-                    print(f"Warning: Could not generate presigned URL for project {project.get('projectId', 'unknown')}")
-                    # Optionally include projects without valid URLs, or skip them
-                    # For now, we'll skip projects with invalid URLs
-                    continue
+                    # Fallback to compressed if original doesn't exist
+                    if project['modelKey'].startswith('uploads/'):
+                        compressed_key = project['modelKey'].replace('uploads/', 'compressed/')
+                    else:
+                        compressed_key = f"compressed/{project['modelKey']}"
+                    
+                    print(f"Original not found, trying compressed: {compressed_key}")
+                    presigned_url = generate_presigned_url(S3_BUCKET_NAME, compressed_key)
+                    if presigned_url:
+                        print(f"Found compressed file, using: {compressed_key}")
+                        project['modelUrl'] = presigned_url
+                        valid_projects.append(project)
+                    else:
+                        print(f"Warning: Could not generate presigned URL for project {project.get('projectId', 'unknown')}")
+                        # Optionally include projects without valid URLs, or skip them
+                        # For now, we'll skip projects with invalid URLs
+                        continue
             else:
                 print(f"Warning: Project {project.get('projectId', 'unknown')} has no modelKey")
                 continue
@@ -295,15 +317,151 @@ def get_project(current_user_sub, project_id):
         
         # Generate fresh presigned URL
         if 'modelKey' in project:
+            # Always try original file first (for immediate access after creation)
             presigned_url = generate_presigned_url(S3_BUCKET_NAME, project['modelKey'])
             if presigned_url:
                 project['modelUrl'] = presigned_url
             else:
-                return jsonify(error="Could not generate access URL for model"), 500
+                # Fallback to compressed if original doesn't exist
+                if project['modelKey'].startswith('uploads/'):
+                    compressed_key = project['modelKey'].replace('uploads/', 'compressed/')
+                else:
+                    compressed_key = f"compressed/{project['modelKey']}"
+                
+                presigned_url = generate_presigned_url(S3_BUCKET_NAME, compressed_key)
+                if presigned_url:
+                    project['modelUrl'] = presigned_url
+                else:
+                    return jsonify(error="Could not generate access URL for model"), 500
         else:
             return jsonify(error="Project has no associated model"), 500
         
         return jsonify(json.loads(json.dumps(project, default=json_serial))), 200
+        
+    except ClientError as e:
+        print(f"DynamoDB error: {e}")
+        return jsonify(error="Database error occurred"), 500
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify(error="An unexpected error occurred"), 500
+
+# ADDED: Update project endpoint
+@app.route('/api/projects/<project_id>', methods=['PUT'])
+@token_required
+def update_project(current_user_sub, project_id):
+    try:
+        # Check if user is the owner of the project
+        project_response = projects_table.get_item(Key={'projectId': project_id})
+        project = project_response.get('Item')
+        
+        if not project:
+            return jsonify(error="Project not found"), 404
+        
+        if project.get('ownerId') != current_user_sub:
+            return jsonify(error="Not authorized to update this project"), 403
+        
+        # Get update data
+        data = request.get_json()
+        if not data:
+            return jsonify(error="No data provided"), 400
+        
+        # Validate project name
+        if 'projectName' in data:
+            new_name = data['projectName'].strip()
+            if not new_name:
+                return jsonify(error="Project name cannot be empty"), 400
+            
+            # Update the project
+            update_response = projects_table.update_item(
+                Key={'projectId': project_id},
+                UpdateExpression='SET projectName = :name, updatedAt = :updated_at',
+                ExpressionAttributeValues={
+                    ':name': new_name,
+                    ':updated_at': datetime.now(timezone.utc).isoformat()
+                },
+                ReturnValues='ALL_NEW'
+            )
+            
+            updated_project = update_response.get('Attributes')
+            
+            # Generate fresh presigned URL for the updated project
+            if 'modelKey' in updated_project:
+                presigned_url = generate_presigned_url(S3_BUCKET_NAME, updated_project['modelKey'])
+                if presigned_url:
+                    updated_project['modelUrl'] = presigned_url
+            
+            return jsonify(json.loads(json.dumps(updated_project, default=json_serial))), 200
+        else:
+            return jsonify(error="No valid fields to update"), 400
+            
+    except ClientError as e:
+        print(f"DynamoDB error: {e}")
+        return jsonify(error="Database error occurred"), 500
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return jsonify(error="An unexpected error occurred"), 500
+
+# ADDED: Delete project endpoint
+@app.route('/api/projects/<project_id>', methods=['DELETE'])
+@token_required
+def delete_project(current_user_sub, project_id):
+    try:
+        # Check if user is the owner of the project
+        project_response = projects_table.get_item(Key={'projectId': project_id})
+        project = project_response.get('Item')
+        
+        if not project:
+            return jsonify(error="Project not found"), 404
+        
+        if project.get('ownerId') != current_user_sub:
+            return jsonify(error="Not authorized to delete this project"), 403
+        
+        # Delete the project from DynamoDB
+        projects_table.delete_item(Key={'projectId': project_id})
+        
+        # Delete project permissions
+        try:
+            permissions_response = permissions_table.scan(
+                FilterExpression=boto3.dynamodb.conditions.Attr('projectId').eq(project_id)
+            )
+            for permission in permissions_response.get('Items', []):
+                permissions_table.delete_item(Key={'permissionId': permission['permissionId']})
+        except Exception as e:
+            print(f"Warning: Could not delete project permissions: {e}")
+        
+        # Delete associated issues
+        try:
+            issues_response = issues_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('projectId').eq(project_id)
+            )
+            for issue in issues_response.get('Items', []):
+                issues_table.delete_item(
+                    Key={'projectId': project_id, 'sortKey': issue['sortKey']}
+                )
+        except Exception as e:
+            print(f"Warning: Could not delete project issues: {e}")
+        
+        # Delete files from S3 (both original and compressed)
+        try:
+            if 'modelKey' in project:
+                # Delete original file
+                s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=project['modelKey'])
+                
+                # Delete compressed file if it exists
+                if project['modelKey'].startswith('uploads/'):
+                    compressed_key = project['modelKey'].replace('uploads/', 'compressed/')
+                else:
+                    compressed_key = f"compressed/{project['modelKey']}"
+                
+                try:
+                    s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=compressed_key)
+                except ClientError as e:
+                    if e.response['Error']['Code'] != 'NoSuchKey':
+                        print(f"Warning: Could not delete compressed file: {e}")
+        except Exception as e:
+            print(f"Warning: Could not delete S3 files: {e}")
+        
+        return jsonify(message="Project deleted successfully"), 200
         
     except ClientError as e:
         print(f"DynamoDB error: {e}")
@@ -617,6 +775,36 @@ def get_all_issues(current_user_sub):
     except Exception as e:
         print(f"Error fetching all issues: {e}")
         return jsonify(error="Failed to fetch issues"), 500
+    
+@app.route('/api/profile', methods=['PUT'])
+@token_required
+def update_user_profile(current_user_sub):
+    """
+    Updates the current user's profile attributes (e.g., name).
+    """
+    data = request.get_json()
+    if not data or 'name' not in data:
+        return jsonify(error="The 'name' field is required"), 400
+
+    new_name = data['name'].strip()
+    if not new_name:
+        return jsonify(error="Name cannot be empty"), 400
+
+    try:
+        cognito_client.admin_update_user_attributes(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=current_user_sub, # The 'sub' is the username for admin actions
+            UserAttributes=[
+                {
+                    'Name': 'name',
+                    'Value': new_name
+                },
+            ]
+        )
+        return jsonify(message="Profile updated successfully"), 200
+    except ClientError as e:
+        print(f"Cognito profile update error: {e}")
+        return jsonify(error="Failed to update profile"), 500
 
     
 @app.route('/api/debug/permissions/<project_id>', methods=['GET'])

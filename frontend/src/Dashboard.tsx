@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Building, Plus, UploadCloud, Loader, AlertCircle, Search, Calendar, User, LogOut, Trash2, Edit3, Eye, MoreVertical, Share2 } from 'lucide-react';
 import { ShareModal } from './ShareModal';
+import { ProfileModal } from './ProfileModal';
+import { Menu, Transition } from '@headlessui/react';
+import axios from 'axios';
 
 // --- Type Definitions ---
 interface Project {
@@ -9,13 +12,15 @@ interface Project {
   modelUrl: string;
   ownerId: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 interface DashboardProps {
   authToken: string;
   onSelectProject: (project: Project) => void;
-  user: { username: string; attributes: { email: string } };
+  user: { username: string; attributes: { email: string; name?: string } };
   signOut: () => void;
+  userAttrsLoading?: boolean;
 }
 
 const API_URL = 'http://localhost:4000';
@@ -30,6 +35,7 @@ const CreateProjectModal = ({ authToken, onClose, onProjectCreated }: {
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -53,27 +59,34 @@ const CreateProjectModal = ({ authToken, onClose, onProjectCreated }: {
     
     setIsUploading(true);
     setError(null);
+    setUploadProgress(0);
 
     const formData = new FormData();
     formData.append('projectName', projectName.trim());
     formData.append('model', file);
 
     try {
-      const response = await fetch(`${API_URL}/api/projects`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${authToken}` },
-        body: formData,
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to create project.');
-      }
+      const response = await axios.post(
+        `${API_URL}/api/projects`,
+        formData,
+        {
+          headers: { 'Authorization': `Bearer ${authToken}` },
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.total) {
+              const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              setUploadProgress(percent);
+            }
+          }
+        }
+      );
+      const result = response.data;
       onProjectCreated(result);
       onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || 'An unknown error occurred.');
     } finally {
       setIsUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -133,6 +146,15 @@ const CreateProjectModal = ({ authToken, onClose, onProjectCreated }: {
             </div>
           </div>
           
+          {isUploading && (
+            <div className="w-full bg-slate-200 rounded h-3 mb-4">
+              <div
+                className="bg-sky-600 h-3 rounded transition-all"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+          )}
+
           <div className="flex justify-end gap-3">
             <button 
               type="button" 
@@ -177,6 +199,15 @@ const ProjectActionsDropdown = ({
   isOpen: boolean;
   onToggle: () => void;
 }) => {
+  // Debug logging
+  console.log('ProjectActionsDropdown Debug:', {
+    projectId: project.projectId,
+    projectOwnerId: project.ownerId,
+    currentUserId: currentUserId,
+    isOwner: currentUserId === project.ownerId,
+    isOpen: isOpen
+  });
+
   return (
     <div className="relative">
       <button
@@ -190,14 +221,14 @@ const ProjectActionsDropdown = ({
       </button>
       
       {isOpen && (
-        <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-10 min-w-[140px]">
+        <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 min-w-[140px]">
           <button
             onClick={(e) => {
               e.stopPropagation();
               onView();
               onToggle();
             }}
-            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 transition-colors"
+            className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 transition-colors rounded-t-lg"
           >
             <Eye size={14} />
             View
@@ -234,7 +265,7 @@ const ProjectActionsDropdown = ({
                   onDelete();
                   onToggle();
                 }}
-                className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors"
+                className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors rounded-b-lg"
               >
                 <Trash2 size={14} />
                 Delete
@@ -275,7 +306,7 @@ const ProjectCard = ({
   }, [dropdownOpen]);
 
   return (
-    <div className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow border border-slate-200 overflow-hidden">
+    <div className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow border border-slate-200 overflow-visible">
       <div 
         className="p-5 cursor-pointer hover:bg-slate-50 transition-colors"
         onClick={() => onSelect(project)}
@@ -509,7 +540,7 @@ const DeleteConfirmationModal = ({
 };
 
 // --- Main Dashboard Component ---
-export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: DashboardProps) => {
+export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut, userAttrsLoading = false }: DashboardProps) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [filteredProjects, setFilteredProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -519,6 +550,7 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: 
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [sharingProject, setSharingProject] = useState<Project | null>(null);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   // Fetch projects on mount
   useEffect(() => {
@@ -615,14 +647,12 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: 
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-slate-200 px-8 py-4">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
+          {/* Left: Logo and Title */}
           <div className="flex items-center gap-3">
             <Building className="w-8 h-8 text-sky-600" />
-            <div>
-              <h1 className="text-2xl font-bold text-slate-800">Projects Dashboard</h1>
-              <p className="text-sm text-slate-500">Welcome back, {user.username}</p>
-            </div>
+            <h1 className="text-2xl font-bold text-slate-800">Projects Dashboard</h1>
           </div>
-          
+          {/* Right: Actions and User Menu */}
           <div className="flex items-center gap-4">
             <button
               onClick={() => setIsCreateModalOpen(true)}
@@ -631,22 +661,81 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: 
               <Plus size={20} />
               New Project
             </button>
-            
-            <div className="flex items-center gap-2 text-sm text-slate-600">
-              <User size={16} />
-              <span>Welcome, {user?.attributes?.email || user?.username}</span>
-            </div>
-            
-            <button
-              onClick={signOut}
-              className="flex items-center gap-2 px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-            >
-              <LogOut size={16} />
-              Sign Out
-            </button>
+            {/* User Dropdown Menu */}
+            <Menu as="div" className="relative inline-block text-left">
+              <Menu.Button className="flex items-center gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg focus:outline-none">
+                {/* User Avatar (Initials) */}
+                <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-sky-500 text-white font-bold text-lg">
+                  {userAttrsLoading
+                    ? <span className="animate-pulse bg-sky-300 w-6 h-6 rounded-full" />
+                    : (user?.attributes?.name
+                        ? user.attributes.name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0,2)
+                        : user?.attributes?.email?.[0]?.toUpperCase() || 'U')}
+                </span>
+                <span className="hidden md:inline text-slate-700 font-medium">
+                  {userAttrsLoading
+                    ? <span className="inline-block w-24 h-4 bg-slate-200 rounded animate-pulse" />
+                    : (user?.attributes?.name || user?.attributes?.email || user?.username)}
+                </span>
+              </Menu.Button>
+              <Transition
+                as={React.Fragment}
+                enter="transition ease-out duration-100"
+                enterFrom="transform opacity-0 scale-95"
+                enterTo="transform opacity-100 scale-100"
+                leave="transition ease-in duration-75"
+                leaveFrom="transform opacity-100 scale-100"
+                leaveTo="transform opacity-0 scale-95"
+              >
+                <Menu.Items className="absolute right-0 mt-2 w-56 origin-top-right bg-white border border-slate-200 divide-y divide-slate-100 rounded-lg shadow-lg focus:outline-none z-50">
+                  <div className="px-4 py-3">
+                    <p className="text-sm font-medium text-slate-800">
+                      {userAttrsLoading
+                        ? <span className="inline-block w-24 h-4 bg-slate-200 rounded animate-pulse" />
+                        : (user?.attributes?.name || user?.attributes?.email || user?.username)}
+                    </p>
+                    <p className="text-xs text-slate-500 truncate">
+                      {userAttrsLoading
+                        ? <span className="inline-block w-16 h-3 bg-slate-200 rounded animate-pulse" />
+                        : user?.attributes?.email}
+                    </p>
+                  </div>
+                  <div className="py-1">
+                    <Menu.Item>
+                      {({ active }) => (
+                        <button
+                          onClick={() => setIsProfileModalOpen(true)}
+                          className={`w-full text-left px-4 py-2 text-sm ${active ? 'bg-sky-50 text-sky-700' : 'text-slate-700'}`}
+                        >
+                          Edit Profile
+                        </button>
+                      )}
+                    </Menu.Item>
+                    <Menu.Item>
+                      {({ active }) => (
+                        <button
+                          onClick={signOut}
+                          className={`w-full text-left px-4 py-2 text-sm ${active ? 'bg-red-50 text-red-700' : 'text-red-600'}`}
+                        >
+                          Sign Out
+                        </button>
+                      )}
+                    </Menu.Item>
+                  </div>
+                </Menu.Items>
+              </Transition>
+            </Menu>
           </div>
         </div>
       </header>
+      {/* Profile Modal */}
+      {isProfileModalOpen && (
+        <ProfileModal
+          authToken={authToken}
+          currentName={user?.attributes?.name || user?.attributes?.email || user?.username}
+          onClose={() => setIsProfileModalOpen(false)}
+        />
+      )}
 
       {/* Main Content */}
       <main className="flex-1 overflow-hidden">
@@ -716,7 +805,7 @@ export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut }: 
                     onEdit={setEditingProject}
                     onDelete={setDeletingProject}
                     onShare={handleShareProject}
-                    currentUserId={user.username}
+                    currentUserId={user?.username}
                   />
                 ))}
               </div>
