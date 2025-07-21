@@ -23,7 +23,7 @@ interface DashboardProps {
   userAttrsLoading?: boolean;
 }
 
-const API_URL = 'http://localhost:4000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
 // --- Create Project Modal Component ---
 const CreateProjectModal = ({ authToken, onClose, onProjectCreated }: {
