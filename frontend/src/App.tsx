@@ -100,7 +100,6 @@ const Model = ({ url, onObjectClick, wireframe }: { url: string; onObjectClick: 
 
   // Define handleMeshClick function with useCallback to prevent recreation
   const handleMeshClick = useCallback((event: any) => {
-    console.log('Click detected!', event);
     event.stopPropagation();
     
     let clickedObject: Object3D | null = event.object;
@@ -109,7 +108,6 @@ const Model = ({ url, onObjectClick, wireframe }: { url: string; onObjectClick: 
     
     if (clickedObject) {
       const userData = clickedObject.userData;
-      console.log('Clicked object userData:', userData);
       
       if (userData?.name) {
         objectData.revitName = userData.name;
@@ -154,8 +152,6 @@ const Model = ({ url, onObjectClick, wireframe }: { url: string; onObjectClick: 
       }
       
       if (userData) {
-        console.log('Found userData:', userData);
-        
         if (userData.extras && Object.keys(userData.extras).length > 0) {
           objectData = { ...objectData, ...userData.extras };
           foundMeaningfulData = true;
@@ -194,7 +190,6 @@ const Model = ({ url, onObjectClick, wireframe }: { url: string; onObjectClick: 
     objectData.clickedAt = new Date().toLocaleTimeString();
     objectData.objectUUID = event.object.uuid;
     
-    console.log('Final object data:', objectData);
     onObjectClick(objectData);
   }, [onObjectClick]);
 
@@ -422,19 +417,12 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }: { objectData: a
       headers,
     });
 
-    console.log(`API ${options.method || 'GET'} ${url}:`, {
-      status: response.status,
-      statusText: response.statusText,
-      ok: response.ok
-    });
-
     return response;
   };
 
   // FIXED: Always fetch issues when projectId is available
   useEffect(() => {
     if (projectId) {
-      console.log('Fetching issues for project:', projectId);
       fetchIssues();
     }
   }, [projectId]);
@@ -443,14 +431,12 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }: { objectData: a
     setLoading(true);
     setError(null);
     try {
-      console.log('Fetching issues for project:', projectId);
       const response = await makeAuthenticatedRequest(
         `${API_URL}/api/issues?projectId=${projectId}`
       );
       
       if (!response.ok) {
         if (response.status === 404) {
-          console.log('No issues found for project:', projectId);
           setIssues([]);
           return;
         }
@@ -459,7 +445,6 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }: { objectData: a
       }
       
       const data = await response.json();
-      console.log('Fetched issues:', data);
       setIssues(Array.isArray(data) ? data : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -479,8 +464,6 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }: { objectData: a
         projectId
       };
       
-      console.log('Creating issue:', issueData);
-      
       const response = await makeAuthenticatedRequest(`${API_URL}/api/issues`, {
         method: 'POST',
         body: JSON.stringify(issueData),
@@ -493,8 +476,6 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }: { objectData: a
       }
       
       const createdIssue = await response.json();
-      console.log('Created issue:', createdIssue);
-      
       setIssues(prev => [createdIssue, ...prev]);
       setShowForm(false);
       
@@ -510,8 +491,6 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }: { objectData: a
     setLoading(true);
     setError(null);
     try {
-      console.log('Updating issue status:', { issueId, status });
-      
       const response = await makeAuthenticatedRequest(`${API_URL}/api/issues/${issueId}`, {
         method: 'PUT',
         body: JSON.stringify({ status }),
@@ -524,7 +503,6 @@ const IssuesPanel = ({ objectData, authToken, projectId, user }: { objectData: a
       }
       
       const updatedIssue = await response.json();
-      console.log('Updated issue:', updatedIssue);
       setIssues(prev => prev.map(issue => 
         issue.id === issueId ? updatedIssue : issue
       ));

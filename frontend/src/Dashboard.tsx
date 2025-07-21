@@ -199,15 +199,6 @@ const ProjectActionsDropdown = ({
   isOpen: boolean;
   onToggle: () => void;
 }) => {
-  // Debug logging
-  console.log('ProjectActionsDropdown Debug:', {
-    projectId: project.projectId,
-    projectOwnerId: project.ownerId,
-    currentUserId: currentUserId,
-    isOwner: currentUserId === project.ownerId,
-    isOpen: isOpen
-  });
-
   return (
     <div className="relative">
       <button
@@ -541,7 +532,6 @@ const DeleteConfirmationModal = ({
 
 // --- Main Dashboard Component ---
 export const ProjectDashboard = ({ authToken, onSelectProject, user, signOut, userAttrsLoading = false }: DashboardProps) => {
-  console.log('User attributes:', user?.attributes);
   const [projects, setProjects] = useState<Project[]>([]);
   const [filteredProjects, setFilteredProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
