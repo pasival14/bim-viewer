@@ -41,7 +41,7 @@ app = Flask(__name__)
 # Setup CORS
 CORS(app, origins=[
     "http://localhost:5173",  # or whatever your local dev port is
-    "https://bim-viewer-wewb.onrender.com/"
+    "https://bim-viewer-wewb.onrender.com"
 ])
 
 # Initialize DynamoDB connection

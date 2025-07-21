@@ -8,7 +8,7 @@ import { fetchUserAttributes } from 'aws-amplify/auth';
 import { ProjectDashboard } from './Dashboard';
 import { ErrorBoundary } from 'react-error-boundary';
 
-const API_URL = 'http://localhost:4000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
 // Types for our issue system - FIXED to match backend response
 interface Issue {
