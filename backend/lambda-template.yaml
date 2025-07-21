@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'BIM Viewer Draco Compression Lambda Function'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: 'S3 bucket name where GLB files are uploaded'
+    Default: 'your-bim-viewer-bucket'
+  
+  LambdaFunctionName:
+    Type: String
+    Description: 'Name for the Lambda function'
+    Default: 'bim-viewer-compression'
+
+Resources:
+  # IAM Role for Lambda
+  CompressionLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${LambdaFunctionName}-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}'
+
+  # Lambda Function
+  CompressionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Runtime: nodejs18.x
+      Handler: compress-glb.handler
+      Role: !GetAtt CompressionLambdaRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.log('Lambda function placeholder - replace with actual code');
+            return { statusCode: 200, body: 'OK' };
+          };
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          S3_BUCKET_NAME: !Ref S3BucketName
+      Tags:
+        - Key: Project
+          Value: BIM-Viewer
+        - Key: Environment
+          Value: Production
+
+  # S3 Bucket Notification Configuration
+  S3BucketNotification:
+    Type: AWS::S3::BucketNotification
+    Properties:
+      Bucket: !Ref S3BucketName
+      LambdaConfigurations:
+        - Event: s3:ObjectCreated:*
+          Filter:
+            S3Key:
+              Rules:
+                - Name: suffix
+                  Value: .glb
+                - Name: prefix
+                  Value: uploads/
+          Function: !GetAtt CompressionLambda.Arn
+
+  # Lambda Permission for S3
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CompressionLambda
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub 'arn:aws:s3:::${S3BucketName}'
+
+Outputs:
+  LambdaFunctionArn:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt CompressionLambda.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArn'
+  
+  LambdaFunctionName:
+    Description: 'Name of the Lambda function'
+    Value: !Ref CompressionLambda
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaName'
+
+  IAMRoleArn:
+    Description: 'ARN of the IAM role for the Lambda function'
+    Value: !GetAtt CompressionLambdaRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RoleArn' 

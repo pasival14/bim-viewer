@@ -1,0 +1,28 @@
+{
+  "name": "bim-viewer-compression-lambda",
+  "version": "1.0.0",
+  "description": "AWS Lambda function for Draco compression of GLB files",
+  "main": "compress-glb.js",
+  "scripts": {
+    "build": "npm install",
+    "test": "node compress-glb.js test-input.glb test-output.glb"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1531.0",
+    "gltf-transform": "^3.10.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "aws-lambda",
+    "draco",
+    "glb",
+    "compression",
+    "bim",
+    "3d-models"
+  ],
+  "author": "BIM Viewer Team",
+  "license": "MIT"
+} 

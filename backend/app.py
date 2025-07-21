@@ -39,7 +39,10 @@ DYNAMODB_TABLE_NAME = os.environ.get('DYNAMODB_TABLE_NAME', 'bim-viewer-issues')
 app = Flask(__name__)
 
 # Setup CORS
-CORS(app)
+CORS(app, origins=[
+    "http://localhost:5173",  # or whatever your local dev port is
+    "https://bim-viewer-wewb.onrender.com/"
+])
 
 # Initialize DynamoDB connection
 try:
@@ -851,6 +854,124 @@ def debug_all_issues(current_user_sub):
     except Exception as e:
         print(f"Error in debug issues: {e}")
         return jsonify(error=str(e)), 500
+
+# ADDED: Manual compression trigger endpoint
+@app.route('/api/compress/<project_id>', methods=['POST'])
+@token_required
+def trigger_compression(current_user_sub, project_id):
+    """
+    Manually trigger compression for a project's model.
+    """
+    try:
+        # Check if user has access to the project
+        if not user_has_project_access(current_user_sub, project_id):
+            return jsonify(error="Project not found or access denied"), 404
+        
+        # Get project details
+        project_response = projects_table.get_item(Key={'projectId': project_id})
+        project = project_response.get('Item')
+        
+        if not project:
+            return jsonify(error="Project not found"), 404
+        
+        if 'modelKey' not in project:
+            return jsonify(error="Project has no associated model"), 400
+        
+        # Trigger Lambda function for compression
+        try:
+            lambda_client = session.client('lambda')
+            
+            # Prepare the event payload
+            event_payload = {
+                "Records": [
+                    {
+                        "s3": {
+                            "bucket": {
+                                "name": S3_BUCKET_NAME
+                            },
+                            "object": {
+                                "key": project['modelKey']
+                            }
+                        }
+                    }
+                ]
+            }
+            
+            # Invoke Lambda function
+            response = lambda_client.invoke(
+                FunctionName='bim-viewer-compression',
+                InvocationType='Event',  # Asynchronous invocation
+                Payload=json.dumps(event_payload)
+            )
+            
+            if response['StatusCode'] == 202:
+                return jsonify({
+                    "message": "Compression triggered successfully",
+                    "projectId": project_id,
+                    "status": "processing"
+                }), 200
+            else:
+                return jsonify(error="Failed to trigger compression"), 500
+                
+        except Exception as e:
+            print(f"Lambda invocation error: {e}")
+            return jsonify(error="Failed to trigger compression"), 500
+            
+    except Exception as e:
+        print(f"Error triggering compression: {e}")
+        return jsonify(error="An unexpected error occurred"), 500
+
+# ADDED: Get compression status endpoint
+@app.route('/api/compress/<project_id>/status', methods=['GET'])
+@token_required
+def get_compression_status(current_user_sub, project_id):
+    """
+    Check if a compressed version of the model exists.
+    """
+    try:
+        # Check if user has access to the project
+        if not user_has_project_access(current_user_sub, project_id):
+            return jsonify(error="Project not found or access denied"), 404
+        
+        # Get project details
+        project_response = projects_table.get_item(Key={'projectId': project_id})
+        project = project_response.get('Item')
+        
+        if not project:
+            return jsonify(error="Project not found"), 404
+        
+        if 'modelKey' not in project:
+            return jsonify(error="Project has no associated model"), 400
+        
+        # Check if compressed version exists
+        compressed_key = project['modelKey'].replace('uploads/', 'compressed/')
+        
+        try:
+            s3_client.head_object(Bucket=S3_BUCKET_NAME, Key=compressed_key)
+            compressed_url = generate_presigned_url(S3_BUCKET_NAME, compressed_key)
+            
+            return jsonify({
+                "projectId": project_id,
+                "hasCompressedVersion": True,
+                "compressedUrl": compressed_url,
+                "originalKey": project['modelKey'],
+                "compressedKey": compressed_key
+            }), 200
+            
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                return jsonify({
+                    "projectId": project_id,
+                    "hasCompressedVersion": False,
+                    "originalKey": project['modelKey'],
+                    "compressedKey": compressed_key
+                }), 200
+            else:
+                raise e
+                
+    except Exception as e:
+        print(f"Error checking compression status: {e}")
+        return jsonify(error="An unexpected error occurred"), 500
 
 # --- Error Handlers ---
 @app.errorhandler(404)
