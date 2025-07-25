@@ -1,7 +1,8 @@
 # BIM Viewer
 
 **Live App:** [https://bim-viewer-wewb.onrender.com/](https://bim-viewer-wewb.onrender.com/)
-**Smaple .glb file:** https://drive.google.com/file/d/19NEHF_fXGILrrmABC7FJpE4dTNIAWgTO/view?usp=sharing
+
+**Sample .glb file:** https://drive.google.com/file/d/19NEHF_fXGILrrmABC7FJpE4dTNIAWgTO/view?usp=sharing
 
 ## Overview
 
